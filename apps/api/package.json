@@ -10,8 +10,10 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "eslint src --ext .ts",
-    "migrate:dev": "echo \"wire up prisma/knex migrate here (Phase 0.2)\" && exit 0",
-    "migrate:deploy": "echo \"wire up prisma/knex migrate here (Phase 0.2)\" && exit 0"
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "prisma:generate": "prisma generate",
+    "seed": "tsx src/db/seed.ts"
   },
   "dependencies": {
     "express": "^4.21.1",
@@ -22,7 +24,8 @@
     "helmet": "^8.0.0",
     "dotenv": "^16.4.5",
     "ioredis": "^5.4.1",
-    "socket.io": "^4.8.1"
+    "socket.io": "^4.8.1",
+    "@prisma/client": "^5.22.0"
   },
   "devDependencies": {
     "typescript": "^5.6.3",
@@ -34,6 +37,10 @@
     "@types/node": "^22.9.0",
     "eslint": "^9.14.0",
     "@typescript-eslint/eslint-plugin": "^8.14.0",
-    "@typescript-eslint/parser": "^8.14.0"
+    "@typescript-eslint/parser": "^8.14.0",
+    "prisma": "^5.22.0"
+  },
+  "prisma": {
+    "seed": "tsx src/db/seed.ts"
   }
 }

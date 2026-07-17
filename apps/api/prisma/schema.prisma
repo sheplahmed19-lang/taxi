@@ -1,0 +1,567 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+// ── Enums ────────────────────────────────────────────────────────────────
+
+enum UserRole {
+  rider
+  driver
+  staff
+  admin
+  fleet_owner
+  dispatcher
+}
+
+enum UserStatus {
+  active
+  suspended
+  banned
+}
+
+enum DriverVerificationStatus {
+  pending
+  approved
+  rejected
+}
+
+enum EarningMode {
+  commission
+  subscription
+}
+
+// Mirrors apps/api/src/modules/trips/state-machine.ts TripStatus — keep in sync.
+enum TripStatus {
+  requested
+  searching
+  accepted
+  arrived
+  started
+  completed
+  paid
+  cancelled_by_rider
+  cancelled_by_driver
+  no_drivers_found
+  expired
+  scheduled
+}
+
+enum PaymentMethod {
+  cash
+  wallet
+  card
+}
+
+enum PaymentStatus {
+  pending
+  paid
+  failed
+  refunded
+}
+
+enum CancelledBy {
+  rider
+  driver
+}
+
+// Mirrors apps/api/src/modules/wallet/ledger.ts LedgerEntryType — keep in sync.
+enum LedgerEntryType {
+  topup
+  ride_payment
+  ride_earning
+  commission
+  owe
+  payout
+  refund
+  promo_credit
+  referral_bonus
+  subscription_fee
+}
+
+enum PayoutStatus {
+  requested
+  approved
+  paid
+  rejected
+}
+
+enum SubscriptionStatus {
+  active
+  expired
+  cancelled
+}
+
+enum PromoType {
+  flat
+  percent
+}
+
+enum ReferralSide {
+  rider
+  driver
+}
+
+enum ReferralBonusStatus {
+  pending
+  credited
+}
+
+// ── Models ───────────────────────────────────────────────────────────────
+
+model User {
+  id           String     @id @default(uuid())
+  phone        String     @unique
+  email        String?    @unique
+  name         String?
+  avatar       String?
+  role         UserRole
+  status       UserStatus @default(active)
+  referralCode String?    @unique @map("referral_code")
+  referredBy   String?    @map("referred_by")
+  createdAt    DateTime   @default(now()) @map("created_at")
+  updatedAt    DateTime   @updatedAt @map("updated_at")
+
+  driverProfile       DriverProfile?
+  wallet               Wallet?
+  favoriteLocations    FavoriteLocation[]
+  notifications        Notification[]
+  ratingsGiven         Rating[]        @relation("RaterRatings")
+  ratingsReceived      Rating[]        @relation("RateeRatings")
+  tripsAsRider         Trip[]          @relation("RiderTrips")
+  tripsAsDriver        Trip[]          @relation("DriverTrips")
+  referralsAsReferrer  Referral[]      @relation("ReferrerReferrals")
+  referralAsReferee    Referral?       @relation("RefereeReferrals")
+  payments             Payment[]
+  chatMessages         ChatMessage[]
+  scheduledRides       ScheduledRide[]
+  fleetOwnerVehicles   Vehicle[]       @relation("FleetOwnerVehicles")
+  fleetOwnerDrivers    DriverProfile[] @relation("FleetOwnerDrivers")
+
+  @@map("users")
+}
+
+model DriverProfile {
+  userId             String                    @id @map("user_id")
+  user               User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  verificationStatus DriverVerificationStatus  @default(pending) @map("verification_status")
+  documents          Json?
+  earningMode        EarningMode               @default(commission) @map("earning_mode")
+  vehicleId          String?                   @unique @map("vehicle_id")
+  currentVehicle     Vehicle?                  @relation("CurrentVehicle", fields: [vehicleId], references: [id])
+  fleetOwnerId       String?                   @map("fleet_owner_id")
+  fleetOwner         User?                     @relation("FleetOwnerDrivers", fields: [fleetOwnerId], references: [id])
+  ratingAvg          Decimal                   @default(0) @map("rating_avg") @db.Decimal(3, 2)
+  online             Boolean                   @default(false)
+  createdAt          DateTime                  @default(now()) @map("created_at")
+  updatedAt          DateTime                  @updatedAt @map("updated_at")
+
+  ownedVehicles Vehicle[]      @relation("OwnedVehicles")
+  payouts       Payout[]
+  oweAmount     OweAmount?
+  subscriptions Subscription[]
+
+  @@map("driver_profiles")
+}
+
+model Vehicle {
+  id            String      @id @default(uuid())
+  driverId      String?     @map("driver_id")
+  driver        DriverProfile? @relation("OwnedVehicles", fields: [driverId], references: [userId])
+  fleetOwnerId  String?     @map("fleet_owner_id")
+  fleetOwner    User?       @relation("FleetOwnerVehicles", fields: [fleetOwnerId], references: [id])
+  vehicleTypeId String      @map("vehicle_type_id")
+  vehicleType   VehicleType @relation(fields: [vehicleTypeId], references: [id])
+  plate         String      @unique
+  model         String?
+  color         String?
+  year          Int?
+  documents     Json?
+  createdAt     DateTime    @default(now()) @map("created_at")
+  updatedAt     DateTime    @updatedAt @map("updated_at")
+
+  currentDriver DriverProfile? @relation("CurrentVehicle")
+  trips         Trip[]
+
+  @@map("vehicles")
+}
+
+model VehicleType {
+  id              String   @id @default(uuid())
+  name            String   @unique
+  icon            String?
+  seats           Int      @default(4)
+  baseFare        Int      @map("base_fare")
+  perKm           Int      @map("per_km")
+  perMin          Int      @map("per_min")
+  minFare         Int      @map("min_fare")
+  nightMultiplier Decimal  @default(1) @map("night_multiplier") @db.Decimal(4, 2)
+  nightStart      String?  @map("night_start")
+  nightEnd        String?  @map("night_end")
+  peakRules       Json?    @map("peak_rules")
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  vehicles Vehicle[]
+  trips    Trip[]
+
+  @@map("vehicle_types")
+}
+
+// polygon is set/read via raw SQL ($queryRaw/$executeRaw) — Prisma Client
+// does not support PostGIS geometry types. See CLAUDE.md rule 6.
+model Zone {
+  id            String                                @id @default(uuid())
+  name          String
+  polygon       Unsupported("geometry(Polygon,4326)")?
+  fareOverrides Json?                                  @map("fare_overrides")
+  active        Boolean                                @default(true)
+  createdAt     DateTime                               @default(now()) @map("created_at")
+  updatedAt     DateTime                               @updatedAt @map("updated_at")
+
+  @@map("zones")
+}
+
+model Trip {
+  id            String        @id @default(uuid())
+  riderId       String        @map("rider_id")
+  rider         User          @relation("RiderTrips", fields: [riderId], references: [id])
+  driverId      String?       @map("driver_id")
+  driver        User?         @relation("DriverTrips", fields: [driverId], references: [id])
+  vehicleTypeId String        @map("vehicle_type_id")
+  vehicleType   VehicleType   @relation(fields: [vehicleTypeId], references: [id])
+  vehicleId     String?       @map("vehicle_id")
+  vehicle       Vehicle?      @relation(fields: [vehicleId], references: [id])
+  status        TripStatus    @default(requested)
+
+  // pickup/drop points are set/read via raw SQL — see Zone.polygon comment above.
+  pickupPoint   Unsupported("geometry(Point,4326)")? @map("pickup_point")
+  pickupAddress String?       @map("pickup_address")
+  dropPoint     Unsupported("geometry(Point,4326)")? @map("drop_point")
+  dropAddress   String?       @map("drop_address")
+
+  otp           String?       @db.Char(4)
+  scheduledAt   DateTime?     @map("scheduled_at")
+  distanceM     Int?          @map("distance_m")
+  durationS     Int?          @map("duration_s")
+  fareBreakdown Json?         @map("fare_breakdown")
+  fareTotal     Int?          @map("fare_total")
+  paymentMethod PaymentMethod? @map("payment_method")
+  paymentStatus PaymentStatus? @default(pending) @map("payment_status")
+  promoId       String?       @map("promo_id")
+  promo         PromoCode?    @relation(fields: [promoId], references: [id])
+  cancelledBy   CancelledBy?  @map("cancelled_by")
+  cancelReason  String?       @map("cancel_reason")
+
+  requestedAt DateTime? @map("requested_at")
+  acceptedAt  DateTime? @map("accepted_at")
+  arrivedAt   DateTime? @map("arrived_at")
+  startedAt   DateTime? @map("started_at")
+  completedAt DateTime? @map("completed_at")
+  paidAt      DateTime? @map("paid_at")
+  cancelledAt DateTime? @map("cancelled_at")
+
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  tripLocations TripLocation[]
+  ledgerEntries LedgerEntry[]
+  payments      Payment[]
+  ratings       Rating[]
+  chatMessages  ChatMessage[]
+  scheduledRide ScheduledRide?
+
+  @@map("trips")
+  @@index([riderId])
+  @@index([driverId])
+  @@index([status])
+}
+
+// point is set/read via raw SQL — see Zone.polygon comment above.
+model TripLocation {
+  id         String    @id @default(uuid())
+  tripId     String    @map("trip_id")
+  trip       Trip      @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  point      Unsupported("geometry(Point,4326)")?
+  speed      Decimal?  @db.Decimal(6, 2)
+  heading    Decimal?  @db.Decimal(5, 2)
+  recordedAt DateTime  @default(now()) @map("recorded_at")
+
+  @@map("trip_locations")
+  @@index([tripId])
+}
+
+model Wallet {
+  id        String   @id @default(uuid())
+  userId    String   @unique @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  balance   Int      @default(0)
+  currency  String   @default("EGP")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  ledgerEntries LedgerEntry[]
+
+  @@map("wallets")
+}
+
+// Append-only. All writes MUST go through wallet/ledger.ts postEntry(). See CLAUDE.md rule 3.
+model LedgerEntry {
+  id             String          @id @default(uuid())
+  walletId       String          @map("wallet_id")
+  wallet         Wallet          @relation(fields: [walletId], references: [id])
+  tripId         String?         @map("trip_id")
+  trip           Trip?           @relation(fields: [tripId], references: [id])
+  type           LedgerEntryType
+  debit          Int             @default(0)
+  credit         Int             @default(0)
+  balanceAfter   Int             @map("balance_after")
+  meta           Json?
+  idempotencyKey String          @unique @map("idempotency_key")
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  @@map("ledger_entries")
+  @@index([walletId])
+  @@index([tripId])
+}
+
+model Payment {
+  id         String        @id @default(uuid())
+  userId     String        @map("user_id")
+  user       User          @relation(fields: [userId], references: [id])
+  tripId     String?       @map("trip_id")
+  trip       Trip?         @relation(fields: [tripId], references: [id])
+  gateway    String
+  gatewayRef String?       @map("gateway_ref")
+  amount     Int
+  status     PaymentStatus @default(pending)
+  rawWebhook Json?         @map("raw_webhook")
+  createdAt  DateTime      @default(now()) @map("created_at")
+  updatedAt  DateTime      @updatedAt @map("updated_at")
+
+  @@map("payments")
+  @@index([userId])
+  @@index([tripId])
+}
+
+model Payout {
+  id          String       @id @default(uuid())
+  driverId    String       @map("driver_id")
+  driver      DriverProfile @relation(fields: [driverId], references: [userId])
+  amount      Int
+  status      PayoutStatus @default(requested)
+  method      String?
+  processedBy String?      @map("processed_by")
+  createdAt   DateTime     @default(now()) @map("created_at")
+  updatedAt   DateTime     @updatedAt @map("updated_at")
+
+  @@map("payouts")
+  @@index([driverId])
+}
+
+model OweAmount {
+  driverId  String        @id @map("driver_id")
+  driver    DriverProfile @relation(fields: [driverId], references: [userId])
+  amount    Int           @default(0)
+  updatedAt DateTime      @updatedAt @map("updated_at")
+
+  @@map("owe_amounts")
+}
+
+model SubscriptionPlan {
+  id         String   @id @default(uuid())
+  name       String
+  price      Int
+  periodDays Int      @map("period_days")
+  active     Boolean  @default(true)
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  subscriptions Subscription[]
+
+  @@map("subscription_plans")
+}
+
+model Subscription {
+  id        String             @id @default(uuid())
+  driverId  String             @map("driver_id")
+  driver    DriverProfile      @relation(fields: [driverId], references: [userId])
+  planId    String             @map("plan_id")
+  plan      SubscriptionPlan   @relation(fields: [planId], references: [id])
+  startsAt  DateTime           @map("starts_at")
+  endsAt    DateTime           @map("ends_at")
+  status    SubscriptionStatus @default(active)
+  createdAt DateTime           @default(now()) @map("created_at")
+
+  @@map("subscriptions")
+  @@index([driverId])
+}
+
+model PromoCode {
+  id             String    @id @default(uuid())
+  code           String    @unique
+  type           PromoType
+  value          Int
+  maxDiscount    Int?      @map("max_discount")
+  usageLimit     Int?      @map("usage_limit")
+  perUserLimit   Int?      @map("per_user_limit")
+  validFrom      DateTime? @map("valid_from")
+  validUntil     DateTime? @map("valid_until")
+  minFare        Int?      @map("min_fare")
+  vehicleTypeIds String[]  @map("vehicle_type_ids")
+  zoneIds        String[]  @map("zone_ids")
+  active         Boolean   @default(true)
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  redemptions PromoRedemption[]
+  trips       Trip[]
+
+  @@map("promo_codes")
+}
+
+model PromoRedemption {
+  id         String    @id @default(uuid())
+  promoId    String    @map("promo_id")
+  promo      PromoCode @relation(fields: [promoId], references: [id])
+  userId     String    @map("user_id")
+  tripId     String?   @map("trip_id")
+  redeemedAt DateTime  @default(now()) @map("redeemed_at")
+
+  @@map("promo_redemptions")
+  @@index([promoId])
+  @@index([userId])
+}
+
+model Referral {
+  id          String              @id @default(uuid())
+  referrerId  String              @map("referrer_id")
+  referrer    User                @relation("ReferrerReferrals", fields: [referrerId], references: [id])
+  refereeId   String              @unique @map("referee_id")
+  referee     User                @relation("RefereeReferrals", fields: [refereeId], references: [id])
+  side        ReferralSide
+  bonusStatus ReferralBonusStatus @default(pending) @map("bonus_status")
+  createdAt   DateTime            @default(now()) @map("created_at")
+
+  @@map("referrals")
+  @@index([referrerId])
+}
+
+model Rating {
+  id        String   @id @default(uuid())
+  tripId    String   @map("trip_id")
+  trip      Trip     @relation(fields: [tripId], references: [id])
+  raterId   String   @map("rater_id")
+  rater     User     @relation("RaterRatings", fields: [raterId], references: [id])
+  rateeId   String   @map("ratee_id")
+  ratee     User     @relation("RateeRatings", fields: [rateeId], references: [id])
+  stars     Int
+  review    String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("ratings")
+  @@unique([tripId, raterId])
+  @@index([rateeId])
+}
+
+// point is set/read via raw SQL — see Zone.polygon comment above.
+model FavoriteLocation {
+  id      String  @id @default(uuid())
+  userId  String  @map("user_id")
+  user    User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  label   String
+  point   Unsupported("geometry(Point,4326)")?
+  address String?
+
+  @@map("favorite_locations")
+  @@index([userId])
+}
+
+model ScheduledRide {
+  id            String   @id @default(uuid())
+  riderId       String   @map("rider_id")
+  rider         User     @relation(fields: [riderId], references: [id])
+  tripId        String?  @unique @map("trip_id")
+  trip          Trip?    @relation(fields: [tripId], references: [id])
+  pickupAddress String   @map("pickup_address")
+  dropAddress   String   @map("drop_address")
+  vehicleTypeId String   @map("vehicle_type_id")
+  scheduledFor  DateTime @map("scheduled_for")
+  status        String   @default("pending")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  @@map("scheduled_rides")
+  @@index([riderId])
+}
+
+model ChatMessage {
+  id        String    @id @default(uuid())
+  tripId    String    @map("trip_id")
+  trip      Trip      @relation(fields: [tripId], references: [id])
+  senderId  String    @map("sender_id")
+  sender    User      @relation(fields: [senderId], references: [id])
+  body      String
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@map("chat_messages")
+  @@index([tripId])
+}
+
+model Notification {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  title     String
+  body      String
+  data      Json?
+  readAt    DateTime? @map("read_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@map("notifications")
+  @@index([userId])
+}
+
+// Config values (fares, commission %, dispatch radius, OTP length, timeouts, ...).
+// Read via config service — never hardcoded. See CLAUDE.md rule 10.
+model SystemConfig {
+  key       String   @id
+  value     Json
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("system_config")
+}
+
+model StaffRole {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  description String?
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  rolePermissions RolePermission[]
+
+  @@map("staff_roles")
+}
+
+model Permission {
+  id          String  @id @default(uuid())
+  key         String  @unique
+  description String?
+
+  rolePermissions RolePermission[]
+
+  @@map("permissions")
+}
+
+model RolePermission {
+  roleId       String     @map("role_id")
+  role         StaffRole  @relation(fields: [roleId], references: [id], onDelete: Cascade)
+  permissionId String     @map("permission_id")
+  permission   Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@id([roleId, permissionId])
+  @@map("role_permissions")
+}

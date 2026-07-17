@@ -44,4 +44,4 @@ Postgres+PostGIS, Redis, Socket.IO realtime, React admin panels, FCM push.
   dispatch ranking logic, promo validation.
 
 ## Current phase
-Update this line as you progress: **Phase 0 — Foundations**
+Update this line as you progress: **Phase 0 — Foundations (0.2 database layer done, next: 0.3 auth module)**

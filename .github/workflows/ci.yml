@@ -8,6 +8,25 @@ on:
 jobs:
   lint-and-test:
     runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgis/postgis:16-3.4
+        env:
+          POSTGRES_USER: ride
+          POSTGRES_PASSWORD: ride
+          POSTGRES_DB: ride_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ride"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://ride:ride@localhost:5432/ride_platform
+
     steps:
       - uses: actions/checkout@v4
 
@@ -22,6 +41,12 @@ jobs:
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma Client
+        run: pnpm --filter api exec prisma generate
+
+      - name: Apply migrations
+        run: pnpm --filter api migrate:deploy
 
       - name: Lint
         run: pnpm lint
