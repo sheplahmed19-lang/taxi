@@ -171,6 +171,7 @@ model DriverProfile {
   userId             String                    @id @map("user_id")
   user               User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
   verificationStatus DriverVerificationStatus  @default(pending) @map("verification_status")
+  rejectionReason    String?                   @map("rejection_reason")
   documents          Json?
   earningMode        EarningMode               @default(commission) @map("earning_mode")
   vehicleId          String?                   @unique @map("vehicle_id")

@@ -8,6 +8,11 @@ const envSchema = z.object({
   REDIS_URL: z.string().default("redis://localhost:6379"),
   JWT_ACCESS_SECRET: z.string().default("dev-access-secret"),
   JWT_REFRESH_SECRET: z.string().default("dev-refresh-secret"),
+  S3_ENDPOINT: z.string().default("http://localhost:9000"),
+  S3_ACCESS_KEY: z.string().default("rideminio"),
+  S3_SECRET_KEY: z.string().default("rideminio123"),
+  S3_BUCKET: z.string().default("ride-platform"),
+  S3_REGION: z.string().default("us-east-1"),
 });
 
 export const env = envSchema.parse(process.env);
