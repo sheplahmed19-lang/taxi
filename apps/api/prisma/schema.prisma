@@ -121,6 +121,12 @@ model User {
   avatar       String?
   role         UserRole
   status       UserStatus @default(active)
+  // Set only for staff/admin/dispatcher/fleet_owner using email+password login.
+  // Riders/drivers authenticate via phone OTP and have no password.
+  passwordHash String?    @map("password_hash")
+  // RBAC role assignment for staff/admin panel users. See StaffRole/Permission/RolePermission.
+  staffRoleId  String?    @map("staff_role_id")
+  staffRole    StaffRole? @relation(fields: [staffRoleId], references: [id])
   referralCode String?    @unique @map("referral_code")
   referredBy   String?    @map("referred_by")
   createdAt    DateTime   @default(now()) @map("created_at")
@@ -141,8 +147,24 @@ model User {
   scheduledRides       ScheduledRide[]
   fleetOwnerVehicles   Vehicle[]       @relation("FleetOwnerVehicles")
   fleetOwnerDrivers    DriverProfile[] @relation("FleetOwnerDrivers")
+  refreshTokens        RefreshToken[]
 
   @@map("users")
+}
+
+// Refresh tokens are rotated on every use and stored hashed (never plaintext).
+// See CLAUDE.md and apps/api/src/modules/auth/tokens.ts.
+model RefreshToken {
+  id        String    @id @default(uuid())
+  userId    String    @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+
+  @@map("refresh_tokens")
+  @@index([userId])
 }
 
 model DriverProfile {
@@ -542,6 +564,7 @@ model StaffRole {
   createdAt   DateTime @default(now()) @map("created_at")
 
   rolePermissions RolePermission[]
+  users           User[]
 
   @@map("staff_roles")
 }

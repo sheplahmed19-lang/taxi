@@ -32,3 +32,15 @@ export class ForbiddenError extends AppError {
     super(403, "FORBIDDEN", message);
   }
 }
+
+export class ConflictError extends AppError {
+  constructor(message = "Conflict") {
+    super(409, "CONFLICT", message);
+  }
+}
+
+export class TooManyRequestsError extends AppError {
+  constructor(message = "Too many requests") {
+    super(429, "TOO_MANY_REQUESTS", message);
+  }
+}
