@@ -1,0 +1,27 @@
+node_modules/
+dist/
+build/
+.env
+.env.*
+!.env.example
+*.log
+
+# Flutter
+mobile/**/.dart_tool/
+mobile/**/.flutter-plugins
+mobile/**/.flutter-plugins-dependencies
+mobile/**/.packages
+mobile/**/build/
+mobile/**/android/
+mobile/**/ios/
+mobile/**/.pub-cache/
+mobile/**/*.g.dart
+mobile/**/*.freezed.dart
+
+# IDE / OS
+.DS_Store
+.vscode/
+.idea/
+
+# Data
+apps/api/data/

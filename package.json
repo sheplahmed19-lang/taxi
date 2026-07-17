@@ -1,0 +1,21 @@
+{
+  "name": "ride-platform",
+  "private": true,
+  "version": "0.0.1",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:api": "pnpm --filter api dev",
+    "test:api": "pnpm --filter api test",
+    "migrate:dev": "pnpm --filter api migrate:dev",
+    "migrate:deploy": "pnpm --filter api migrate:deploy",
+    "dev:web": "pnpm --filter web dev",
+    "lint": "pnpm -r --if-present lint",
+    "build": "pnpm -r --if-present build",
+    "test": "pnpm -r --if-present test"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
