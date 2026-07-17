@@ -44,4 +44,4 @@ Postgres+PostGIS, Redis, Socket.IO realtime, React admin panels, FCM push.
   dispatch ranking logic, promo validation.
 
 ## Current phase
-Update this line as you progress: **Phase 1 — Core Ride Loop (1.1 fare engine done, next: 1.2 fare estimate endpoint)**
+Update this line as you progress: **Phase 1 — Core Ride Loop (1.2 fare estimate endpoint done, next: 1.3 driver availability + live location)**

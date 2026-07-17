@@ -59,6 +59,9 @@ jobs:
       - name: Apply migrations
         run: pnpm --filter api migrate:deploy
 
+      - name: Seed database
+        run: pnpm --filter api seed
+
       - name: Lint
         run: pnpm lint
 

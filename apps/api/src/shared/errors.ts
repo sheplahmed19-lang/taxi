@@ -44,3 +44,9 @@ export class TooManyRequestsError extends AppError {
     super(429, "TOO_MANY_REQUESTS", message);
   }
 }
+
+export class NoRouteFoundError extends AppError {
+  constructor(message = "No route found between pickup and drop") {
+    super(422, "NO_ROUTE_FOUND", message);
+  }
+}
