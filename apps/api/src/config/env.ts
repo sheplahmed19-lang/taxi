@@ -13,6 +13,9 @@ const envSchema = z.object({
   S3_SECRET_KEY: z.string().default("rideminio123"),
   S3_BUCKET: z.string().default("ride-platform"),
   S3_REGION: z.string().default("us-east-1"),
+  FIREBASE_PROJECT_ID: z.string().default(""),
+  FIREBASE_CLIENT_EMAIL: z.string().default(""),
+  FIREBASE_PRIVATE_KEY: z.string().default(""),
 });
 
 export const env = envSchema.parse(process.env);

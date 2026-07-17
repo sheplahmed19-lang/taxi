@@ -6,6 +6,7 @@ import { ValidationError } from "../../shared/errors.js";
 import {
   createFavoriteSchema,
   listNotificationsQuerySchema,
+  registerDeviceTokenSchema,
   updateFavoriteSchema,
   updateProfileSchema,
 } from "./schemas.js";
@@ -14,6 +15,7 @@ import {
   deleteFavorite,
   getProfile,
   listFavorites,
+  registerDeviceToken,
   updateAvatar,
   updateFavorite,
   updateProfile,
@@ -93,5 +95,14 @@ usersRouter.get(
     const { cursor } = listNotificationsQuerySchema.parse(req.query);
     const notifications = await listForUser(req.user!.id, cursor);
     res.json({ success: true, data: notifications });
+  }),
+);
+
+usersRouter.post(
+  "/me/device-tokens",
+  asyncHandler(async (req, res) => {
+    const { token, platform } = registerDeviceTokenSchema.parse(req.body);
+    const deviceToken = await registerDeviceToken(req.user!.id, token, platform);
+    res.status(201).json({ success: true, data: deviceToken });
   }),
 );

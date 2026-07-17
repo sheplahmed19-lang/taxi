@@ -44,4 +44,4 @@ Postgres+PostGIS, Redis, Socket.IO realtime, React admin panels, FCM push.
   dispatch ranking logic, promo validation.
 
 ## Current phase
-Update this line as you progress: **Phase 0 — Foundations (0.4 users & profiles done, next: 0.5 realtime + notifications skeleton)**
+Update this line as you progress: **Phase 0 — Foundations (0.5 realtime + notifications skeleton done, next: 0.6 Flutter app scaffolds — already scaffolded, see mobile/rider_app and mobile/driver_app READMEs)**

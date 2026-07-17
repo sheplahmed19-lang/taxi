@@ -1,6 +1,7 @@
 import { createServer } from "node:http";
 import { createApp } from "./app.js";
 import { createRealtimeServer } from "./realtime/index.js";
+import "./jobs/index.js";
 import { env } from "./config/env.js";
 import { logger } from "./shared/logger.js";
 

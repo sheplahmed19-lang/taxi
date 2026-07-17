@@ -23,7 +23,10 @@
       "@prisma/client",
       "@prisma/engines",
       "esbuild",
-      "prisma"
+      "prisma",
+      "@firebase/util",
+      "msgpackr-extract",
+      "protobufjs"
     ]
   }
 }

@@ -127,3 +127,20 @@ export async function deleteFavorite(userId: string, id: string): Promise<void> 
   }
   await prisma.favoriteLocation.delete({ where: { id } });
 }
+
+/**
+ * Registers an FCM device token for push notifications. Upserts by token
+ * (unique) so re-registering the same device — including after a different
+ * user logs in on it — reassigns it rather than erroring.
+ */
+export async function registerDeviceToken(
+  userId: string,
+  token: string,
+  platform?: "ios" | "android" | "web",
+) {
+  return prisma.deviceToken.upsert({
+    where: { token },
+    update: { userId, platform },
+    create: { userId, token, platform },
+  });
+}

@@ -148,8 +148,23 @@ model User {
   fleetOwnerVehicles   Vehicle[]       @relation("FleetOwnerVehicles")
   fleetOwnerDrivers    DriverProfile[] @relation("FleetOwnerDrivers")
   refreshTokens        RefreshToken[]
+  deviceTokens         DeviceToken[]
 
   @@map("users")
+}
+
+// FCM device push tokens (one row per device). See notifications/service.ts:sendToUser
+// and shared/fcm.ts.
+model DeviceToken {
+  id        String   @id @default(uuid())
+  userId    String   @map("user_id")
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String?
+  createdAt DateTime @default(now()) @map("created_at")
+
+  @@map("device_tokens")
+  @@index([userId])
 }
 
 // Refresh tokens are rotated on every use and stored hashed (never plaintext).

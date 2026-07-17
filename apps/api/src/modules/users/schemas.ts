@@ -22,3 +22,8 @@ export const updateFavoriteSchema = z.object({
 export const listNotificationsQuerySchema = z.object({
   cursor: z.string().uuid().optional(),
 });
+
+export const registerDeviceTokenSchema = z.object({
+  token: z.string().min(1),
+  platform: z.enum(["ios", "android", "web"]).optional(),
+});
