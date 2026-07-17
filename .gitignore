@@ -25,3 +25,6 @@ mobile/**/*.freezed.dart
 
 # Data
 apps/api/data/
+apps/api/tests/*.js
+apps/api/tests/*.js.map
+*.tsbuildinfo
