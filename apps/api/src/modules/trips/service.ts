@@ -11,6 +11,7 @@ import { redis } from "../../shared/redis.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
 import { calculateFinalFare, estimateFares } from "../fares/service.js";
 import { geoSetKey, getDriverState } from "../drivers/service.js";
+import { postCashTripEarnings } from "../wallet/service.js";
 import { nextStatus, type TripEvent, type TripStatus } from "./state-machine.js";
 
 const ACTIVE_TRIP_EXCLUDED_STATUSES: TripStatus[] = [
@@ -346,13 +347,23 @@ export async function completeTrip(tripId: string, driverId: string) {
     }
   }
 
+  // Cash close-out (Phase 1.8): the rider already paid the driver directly,
+  // so there's nothing to charge — just record the commission the driver
+  // now owes the platform and mark the trip settled. Card/wallet settlement
+  // lands in Phase 2 alongside the payment gateways.
+  let finalTrip = updated;
+  if (trip.paymentMethod === "cash") {
+    await postCashTripEarnings(tripId, driverId, updated.fareTotal ?? 0);
+    finalTrip = await transitionTrip(tripId, "payment_settled", { paymentStatus: "paid" });
+  }
+
   emitToTrip(tripId, "trip:status", {
     tripId,
-    status: updated.status,
-    payload: { fareBreakdown: breakdown, fareTotal: breakdown?.total ?? updated.fareTotal },
+    status: finalTrip.status,
+    payload: { fareBreakdown: breakdown, fareTotal: breakdown?.total ?? finalTrip.fareTotal },
   });
 
-  return updated;
+  return finalTrip;
 }
 
 /**

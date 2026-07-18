@@ -30,7 +30,11 @@ async function makeRider(phone: string): Promise<string> {
 }
 
 async function makeOnlineDriver(phone: string, plate: string, lat: number, lng: number): Promise<string> {
-  const user = await prisma.user.upsert({ where: { phone }, update: {}, create: { phone, role: "driver" } });
+  const user = await prisma.user.upsert({
+    where: { phone },
+    update: {},
+    create: { phone, role: "driver", wallet: { create: { balance: 0 } } },
+  });
   await registerDriver(user.id, { vehicleTypeId, plate });
   await approveDriver(user.id);
   await setAvailability(user.id, true);
@@ -49,6 +53,7 @@ async function makeAcceptedTrip(riderId: string, driverId: string) {
 async function cleanupTrip(tripId: string): Promise<void> {
   await prisma.rating.deleteMany({ where: { tripId } });
   await prisma.tripLocation.deleteMany({ where: { tripId } });
+  await prisma.ledgerEntry.deleteMany({ where: { tripId } });
   await prisma.trip.delete({ where: { id: tripId } });
 }
 
@@ -73,6 +78,7 @@ describe("trip lifecycle", () => {
   afterAll(async () => {
     await closeDispatchTimeout();
     for (const id of userIds) {
+      await prisma.oweAmount.deleteMany({ where: { driverId: id } });
       await prisma.vehicle.deleteMany({ where: { driverId: id } });
       await prisma.driverProfile.deleteMany({ where: { userId: id } });
     }
@@ -114,7 +120,7 @@ describe("trip lifecycle", () => {
   });
 
   it("relays driver location to the trip room and only persists trip_locations once started", async () => {
-    const rider = await makeRider("+201000044444");
+    const rider = await makeRider("+201000044454");
     const driver = await makeOnlineDriver("+201000055553", "LIFE-003", 30.0505, 31.2305);
     const trip = await makeAcceptedTrip(rider, driver);
 
@@ -149,7 +155,8 @@ describe("trip lifecycle", () => {
     await flushTripLocations();
 
     const completed = await completeTrip(trip.id, driver);
-    expect(completed.status).toBe("completed");
+    // Cash trip: completeTrip auto-settles straight through to "paid" (Phase 1.8).
+    expect(completed.status).toBe("paid");
     expect(completed.completedAt).not.toBeNull();
     expect(completed.distanceM).toBeGreaterThan(0);
     expect(completed.fareTotal).toBeGreaterThan(0);
@@ -170,7 +177,8 @@ describe("trip lifecycle", () => {
     // No location pings recorded during the trip at all.
 
     const completed = await completeTrip(trip.id, driver);
-    expect(completed.status).toBe("completed");
+    // Cash trip: completeTrip auto-settles straight through to "paid" (Phase 1.8).
+    expect(completed.status).toBe("paid");
     expect(completed.distanceM).toBeGreaterThan(0);
 
     await cleanupTrip(trip.id);

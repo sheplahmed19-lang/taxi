@@ -7,7 +7,7 @@ import { createRealtimeServer, emitToUser } from "../src/realtime/index.js";
 import { signAccessToken } from "../src/modules/auth/tokens.js";
 import { sendToUser } from "../src/modules/notifications/service.js";
 
-const phone = "+201000055555";
+const phone = "+201000077771";
 let userId: string;
 let baseUrl: string;
 let httpServer: ReturnType<typeof createServer>;
