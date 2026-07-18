@@ -11,7 +11,8 @@ import { redis } from "../../shared/redis.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
 import { calculateFinalFare, estimateFares } from "../fares/service.js";
 import { geoSetKey, getDriverState } from "../drivers/service.js";
-import { postCashTripEarnings, postElectronicTripEarnings } from "../wallet/service.js";
+import { postCashTripEarnings, postElectronicTripEarnings, settleWalletTripPayment } from "../wallet/service.js";
+import { sendToUser } from "../notifications/service.js";
 import { nextStatus, type TripEvent, type TripStatus } from "./state-machine.js";
 
 const ACTIVE_TRIP_EXCLUDED_STATUSES: TripStatus[] = [
@@ -357,12 +358,33 @@ export async function completeTrip(tripId: string, driverId: string) {
 
   // Cash close-out (Phase 1.8): the rider already paid the driver directly,
   // so there's nothing to charge — just record the commission the driver
-  // now owes the platform and mark the trip settled. Card/wallet settlement
-  // lands in Phase 2 alongside the payment gateways.
+  // now owes the platform and mark the trip settled. Card settlement is a
+  // separate rider-initiated step (payments/service.ts:initRidePayment ->
+  // webhook -> markTripPaid above).
   let finalTrip = updated;
   if (trip.paymentMethod === "cash") {
     await postCashTripEarnings(tripId, driverId, updated.fareTotal ?? 0);
     finalTrip = await transitionTrip(tripId, "payment_settled", { paymentStatus: "paid" });
+  } else if (trip.paymentMethod === "wallet") {
+    const { paid } = await settleWalletTripPayment(tripId, trip.riderId, driverId, updated.fareTotal ?? 0);
+    if (paid) {
+      finalTrip = await transitionTrip(tripId, "payment_settled", { paymentStatus: "paid" });
+    } else {
+      // Insufficient wallet balance — fall back to cash rather than leaving
+      // the trip stuck unpaid. The driver still needs to collect physically,
+      // so the rider (and CLAUDE.md rule 3-compliant commission tracking)
+      // both need to reflect that the payment method actually changed.
+      await postCashTripEarnings(tripId, driverId, updated.fareTotal ?? 0);
+      finalTrip = await transitionTrip(tripId, "payment_settled", {
+        paymentStatus: "paid",
+        paymentMethod: "cash",
+      });
+      await sendToUser(trip.riderId, {
+        title: "Wallet balance too low",
+        body: "Your wallet didn't have enough balance for this ride — please pay the driver in cash.",
+        data: { tripId, type: "wallet_fallback_cash" },
+      });
+    }
   }
 
   emitToTrip(tripId, "trip:status", {

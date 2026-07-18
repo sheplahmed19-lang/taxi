@@ -1,7 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../../shared/asyncHandler.js";
 import { requireAuth } from "../../middleware/auth.js";
-import { initWalletTopup } from "../payments/service.js";
+import { DEFAULT_GATEWAY, initWalletTopup } from "../payments/service.js";
 import { listTransactionsQuerySchema, topupInitSchema } from "./schemas.js";
 import { getBalance, listTransactions } from "./service.js";
 
@@ -29,8 +29,8 @@ walletRouter.get(
 walletRouter.post(
   "/topup/init",
   asyncHandler(async (req, res) => {
-    const { amount, currency } = topupInitSchema.parse(req.body);
-    const result = await initWalletTopup(req.user!.id, amount, currency);
+    const { amount, currency, gateway } = topupInitSchema.parse(req.body);
+    const result = await initWalletTopup(req.user!.id, amount, currency, gateway ?? DEFAULT_GATEWAY);
     res.status(201).json({ success: true, data: result });
   }),
 );

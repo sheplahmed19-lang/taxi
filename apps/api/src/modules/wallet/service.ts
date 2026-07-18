@@ -2,7 +2,7 @@
 // Other modules must only import from this file, never from routes.ts or internals.
 import { prisma } from "../../db/index.js";
 import { getConfigValue } from "../../shared/config.js";
-import { NotFoundError } from "../../shared/errors.js";
+import { ConflictError, NotFoundError } from "../../shared/errors.js";
 import { postEntry } from "./ledger.js";
 
 const TRANSACTIONS_PAGE_SIZE = 20;
@@ -106,4 +106,44 @@ export async function postCashTripEarnings(tripId: string, driverId: string, far
  */
 export async function postElectronicTripEarnings(tripId: string, driverId: string, fareTotal: number): Promise<void> {
   await postTripCommissionSplit(tripId, driverId, fareTotal);
+}
+
+/**
+ * Wallet ride payment (Phase 2.3): atomically debits the rider's wallet for
+ * the fare and credits the driver, in one step at trip completion — no
+ * separate confirm/webhook round-trip like card, since the money is
+ * already sitting in the platform's own ledger. Relies on postEntry's own
+ * row-locked negative-balance rejection rather than a separate balance
+ * pre-check, so a debit attempt racing another concurrent spend on the same
+ * wallet can't produce a wrong answer (TOCTOU). Returns { paid: false }
+ * on insufficient balance so the caller can fall back to cash — this is
+ * not itself idempotent to retry with a different fareTotal, but replaying
+ * the exact same call is safe (postEntry's idempotencyKey is per-trip).
+ */
+export async function settleWalletTripPayment(
+  tripId: string,
+  riderId: string,
+  driverId: string,
+  fareTotal: number,
+): Promise<{ paid: boolean }> {
+  const riderWallet = await getWalletForUser(riderId);
+
+  try {
+    await postEntry({
+      walletId: riderWallet.id,
+      tripId,
+      type: "ride_payment",
+      debit: fareTotal,
+      credit: 0,
+      idempotencyKey: `trip:${tripId}:wallet_debit`,
+    });
+  } catch (err) {
+    if (err instanceof ConflictError) {
+      return { paid: false };
+    }
+    throw err;
+  }
+
+  await postElectronicTripEarnings(tripId, driverId, fareTotal);
+  return { paid: true };
 }

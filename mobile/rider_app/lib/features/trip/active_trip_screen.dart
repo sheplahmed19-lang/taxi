@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_stripe/flutter_stripe.dart' hide Card;
 import 'package:go_router/go_router.dart';
 import 'package:google_maps_flutter/google_maps_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 
+import '../../core/api/api_exception.dart';
 import '../../core/maps/map_utils.dart';
 import '../../shared/models/trip.dart';
+import 'payments_repository.dart';
 import 'trip_session.dart';
 
 class ActiveTripScreen extends ConsumerWidget {
@@ -257,6 +260,10 @@ class _TripCompleteViewState extends ConsumerState<_TripCompleteView> {
   int _stars = 5;
   bool _submitting = false;
   bool _submitted = false;
+  bool _paying = false;
+  String? _payError;
+
+  bool get _cardPaymentDue => widget.trip.paymentMethod == 'card' && widget.trip.paymentStatus != 'paid';
 
   Future<void> _submit() async {
     setState(() => _submitting = true);
@@ -265,6 +272,34 @@ class _TripCompleteViewState extends ConsumerState<_TripCompleteView> {
       setState(() => _submitted = true);
     } finally {
       if (mounted) setState(() => _submitting = false);
+    }
+  }
+
+  Future<void> _payNow() async {
+    setState(() {
+      _paying = true;
+      _payError = null;
+    });
+    try {
+      final intent = await ref.read(paymentsRepositoryProvider).initRidePayment(widget.trip.id);
+      if (intent.clientSecret != null) {
+        await Stripe.instance.initPaymentSheet(
+          paymentSheetParameters: SetupPaymentSheetParameters(
+            paymentIntentClientSecret: intent.clientSecret!,
+            merchantDisplayName: 'Ride',
+          ),
+        );
+        await Stripe.instance.presentPaymentSheet();
+      }
+      // Payment success itself doesn't update local state here — the
+      // backend's webhook -> trip:status event (handled in trip_session.dart
+      // via a re-fetch) is the source of truth once it lands.
+    } on StripeException catch (e) {
+      setState(() => _payError = e.error.localizedMessage ?? 'Payment was not completed');
+    } catch (e) {
+      setState(() => _payError = e is ApiException ? e.message : 'Could not start payment');
+    } finally {
+      if (mounted) setState(() => _paying = false);
     }
   }
 
@@ -288,10 +323,37 @@ class _TripCompleteViewState extends ConsumerState<_TripCompleteView> {
                     const SizedBox(height: 4),
                     Text('${trip.fareTotal ?? '—'}', style: const TextStyle(fontSize: 28)),
                     if (trip.paymentMethod == 'cash') const Text('Paid in cash'),
+                    if (trip.paymentMethod == 'wallet' && trip.paymentStatus == 'paid') const Text('Paid from wallet'),
                   ],
                 ),
               ),
             ),
+            if (_cardPaymentDue) ...[
+              const SizedBox(height: 16),
+              Card(
+                color: Theme.of(context).colorScheme.primaryContainer,
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text('Payment due'),
+                      if (_payError != null) ...[
+                        const SizedBox(height: 8),
+                        Text(_payError!, style: TextStyle(color: Theme.of(context).colorScheme.error)),
+                      ],
+                      const SizedBox(height: 8),
+                      ElevatedButton(
+                        onPressed: _paying ? null : _payNow,
+                        child: _paying
+                            ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
+                            : const Text('Pay now'),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
             const SizedBox(height: 24),
             if (!_submitted) ...[
               const Text('Rate your driver', style: TextStyle(fontWeight: FontWeight.bold)),

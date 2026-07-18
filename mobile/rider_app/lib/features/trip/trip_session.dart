@@ -85,6 +85,16 @@ class TripSessionNotifier extends StateNotifier<TripSessionState> {
       final event = TripStatusEvent.fromJson(Map<String, dynamic>.from(data as Map));
       final current = state.trip;
       if (current == null || current.id != event.tripId) return;
+
+      if (event.status == TripStatus.completed || event.status == TripStatus.paid) {
+        // paymentMethod can change server-side without the rider doing
+        // anything (e.g. a wallet payment falling back to cash for
+        // insufficient balance), so re-fetch the authoritative trip rather
+        // than trying to patch individual fields from the socket payload.
+        _refetchTrip(event.tripId);
+        return;
+      }
+
       final payload = event.payload;
       state = state.copyWith(
         trip: current.copyWith(
@@ -105,6 +115,16 @@ class TripSessionNotifier extends StateNotifier<TripSessionState> {
       if (current == null) return;
       state = state.copyWith(noDriversFound: true, trip: current.copyWith(status: TripStatus.noDriversFound));
     });
+  }
+
+  Future<void> _refetchTrip(String tripId) async {
+    try {
+      final trip = await _ref.read(tripRepositoryProvider).getTrip(tripId);
+      if (state.trip?.id != tripId) return; // session moved on (e.g. reset()) while this was in flight
+      state = state.copyWith(trip: trip);
+    } catch (_) {
+      // Best-effort — the trip stays at its last known state, which the UI already handles.
+    }
   }
 
   Future<void> requestTrip({

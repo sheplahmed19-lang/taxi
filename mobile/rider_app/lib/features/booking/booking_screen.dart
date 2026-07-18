@@ -8,11 +8,13 @@ import '../../core/location/location_service.dart';
 import '../../shared/models/fare_estimate.dart';
 import '../../shared/models/latlng.dart';
 import '../trip/trip_session.dart';
+import '../wallet/wallet_repository.dart';
 import 'fare_repository.dart';
 import 'map_picker_screen.dart';
 
 final fareRepositoryProvider = Provider<FareRepository>((ref) => FareRepository(ref.watch(dioClientProvider)));
 final locationServiceProvider = Provider<LocationService>((ref) => LocationService());
+final walletRepositoryProvider = Provider<WalletRepository>((ref) => WalletRepository(ref.watch(dioClientProvider)));
 
 class BookingScreen extends ConsumerStatefulWidget {
   const BookingScreen({super.key});
@@ -33,10 +35,23 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
   bool _requesting = false;
   String? _error;
 
+  String _paymentMethod = 'cash';
+  int? _walletBalance;
+
   @override
   void initState() {
     super.initState();
     _loadCurrentLocation();
+    _loadWalletBalance();
+  }
+
+  Future<void> _loadWalletBalance() async {
+    try {
+      final balance = await ref.read(walletRepositoryProvider).getBalance();
+      if (mounted) setState(() => _walletBalance = balance);
+    } catch (_) {
+      // Non-critical — the payment-method selector still works without a balance preview.
+    }
   }
 
   Future<void> _loadCurrentLocation() async {
@@ -113,7 +128,7 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
             pickup: pickup,
             drop: drop,
             vehicleTypeId: vehicleTypeId,
-            paymentMethod: 'cash',
+            paymentMethod: _paymentMethod,
           );
       if (mounted) context.go('/trip');
     } catch (e) {
@@ -177,11 +192,27 @@ class _BookingScreenState extends ConsumerState<BookingScreen> {
               ),
             ),
             const SizedBox(height: 16),
+            const Text('How will you pay?', style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+            const SizedBox(height: 8),
+            SegmentedButton<String>(
+              segments: [
+                const ButtonSegment(value: 'cash', label: Text('Cash'), icon: Icon(Icons.money)),
+                ButtonSegment(
+                  value: 'wallet',
+                  label: Text(_walletBalance != null ? 'Wallet ($_walletBalance)' : 'Wallet'),
+                  icon: const Icon(Icons.account_balance_wallet),
+                ),
+                const ButtonSegment(value: 'card', label: Text('Card'), icon: Icon(Icons.credit_card)),
+              ],
+              selected: {_paymentMethod},
+              onSelectionChanged: (selection) => setState(() => _paymentMethod = selection.first),
+            ),
+            const SizedBox(height: 16),
             ElevatedButton(
               onPressed: _requesting ? null : _requestRide,
               child: _requesting
                   ? const SizedBox(height: 20, width: 20, child: CircularProgressIndicator(strokeWidth: 2))
-                  : const Text('Request ride — pay cash'),
+                  : const Text('Request ride'),
             ),
           ],
         ],

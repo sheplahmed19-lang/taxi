@@ -19,6 +19,7 @@ const envSchema = z.object({
   GOOGLE_MAPS_API_KEY: z.string().default(""),
   STRIPE_SECRET_KEY: z.string().default(""),
   STRIPE_WEBHOOK_SECRET: z.string().default(""),
+  PAYSTACK_SECRET_KEY: z.string().default(""),
 });
 
 export const env = envSchema.parse(process.env);

@@ -10,9 +10,12 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
 /fares       estimate
 /trips       create, :id, :id/accept|arrive|start|complete|cancel, :id/rate, history, :id/track (public token)
 /scheduled   CRUD
-/wallet      balance, transactions (cursor pagination), topup/init (Stripe)
-/payments    ride/:tripId/init (Stripe card charge for a completed card-pay trip),
-             webhook/:gateway (signature-verified, idempotent); methods CRUD not yet implemented
+/wallet      balance, transactions (cursor pagination), topup/init (body: {amount, currency?, gateway?} —
+             gateway is "stripe" (default) or "paystack"); wallet is also a trip paymentMethod, settled
+             atomically at trip completion with an automatic fallback to cash on insufficient balance
+/payments    ride/:tripId/init (charges a completed card-pay trip's final fare; body: {gateway?}),
+             webhook/:gateway (signature-verified, idempotent — :gateway is "stripe" or "paystack",
+             each with its own signature header); methods CRUD not yet implemented
 /payouts     request, admin approve/reject/paid
 /promos      validate, apply; admin CRUD
 /referrals   my-code, stats

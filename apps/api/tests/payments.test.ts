@@ -6,6 +6,7 @@ import { requestTrip, handleDriverResponse } from "../src/modules/dispatch/servi
 import { closeDispatchTimeout } from "../src/jobs/dispatchTimeout.js";
 import { arriveTrip, completeTrip, startTrip } from "../src/modules/trips/service.js";
 import { handleWebhook, initRidePayment, initWalletTopup, __setGatewayForTesting } from "../src/modules/payments/service.js";
+import { settleWalletTripPayment } from "../src/modules/wallet/service.js";
 import { ConflictError, ForbiddenError, ValidationError } from "../src/shared/errors.js";
 import type { PaymentGateway } from "../src/modules/payments/gateway.interface.js";
 
@@ -99,9 +100,27 @@ async function makeCompletedCardTrip(riderId: string, driverId: string) {
   return completeTrip(started.id, driverId);
 }
 
+async function makeCompletedTrip(riderId: string, driverId: string, paymentMethod: "wallet" | "cash") {
+  const trip = await requestTrip(riderId, { pickup, drop, vehicleTypeId, paymentMethod });
+  tripIds.push(trip.id);
+  await handleDriverResponse(trip.id, driverId, true);
+  await arriveTrip(trip.id, driverId);
+  const started = await startTrip(trip.id, driverId, (await prisma.trip.findUniqueOrThrow({ where: { id: trip.id } })).otp!);
+  return completeTrip(started.id, driverId);
+}
+
+function fakePaystackSucceededEvent(metadata: Record<string, string>) {
+  return Buffer.from(JSON.stringify({ event: "charge.success", data: { reference: "ps_ref", metadata } }));
+}
+
+function fakePaystackFailedEvent(metadata: Record<string, string>) {
+  return Buffer.from(JSON.stringify({ event: "charge.failed", data: { reference: "ps_ref", metadata } }));
+}
+
 describe("payments", () => {
   beforeAll(() => {
     __setGatewayForTesting("stripe", new FakeGateway());
+    __setGatewayForTesting("paystack", new FakeGateway());
   });
 
   beforeEach(async () => {
@@ -279,6 +298,106 @@ describe("payments", () => {
       const walletAfterSecond = await prisma.wallet.findUniqueOrThrow({ where: { userId: driver } });
 
       expect(walletAfterSecond.balance).toBe(walletAfterFirst.balance);
+    });
+  });
+
+  describe("wallet ride payment (2.3)", () => {
+    it("settleWalletTripPayment returns paid:false and posts nothing when the balance is insufficient", async () => {
+      const rider = await makeRider("+201000099301");
+      const driver = await makeOnlineDriver("+201000099302", "PAY-101", 30.0505, 31.2305);
+
+      const result = await settleWalletTripPayment("fake-trip-insufficient", rider, driver, 999999);
+      expect(result.paid).toBe(false);
+
+      const entries = await prisma.ledgerEntry.findMany({ where: { tripId: "fake-trip-insufficient" } });
+      expect(entries).toHaveLength(0);
+    });
+
+    it("atomically debits the rider and credits the driver when the balance is sufficient", async () => {
+      const rider = await makeRider("+201000099303");
+      const driver = await makeOnlineDriver("+201000099304", "PAY-102", 30.0505, 31.2305);
+      await prisma.wallet.update({ where: { userId: rider }, data: { balance: 5000 } });
+
+      const trip = await makeCompletedTrip(rider, driver, "wallet");
+      expect(trip.status).toBe("paid"); // unlike card, wallet settles synchronously at completion
+      expect(trip.paymentMethod).toBe("wallet");
+
+      const riderWallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: rider } });
+      expect(riderWallet.balance).toBe(5000 - trip.fareTotal!);
+
+      const driverWallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: driver } });
+      const commission = Math.round((trip.fareTotal! * 20) / 100);
+      expect(driverWallet.balance).toBe(trip.fareTotal! - commission);
+
+      const owe = await prisma.oweAmount.findUnique({ where: { driverId: driver } });
+      expect(owe).toBeNull(); // platform already held the money — no liability like cash
+    });
+
+    it("falls back to cash and notifies the rider when the wallet balance is insufficient", async () => {
+      const rider = await makeRider("+201000099305");
+      const driver = await makeOnlineDriver("+201000099306", "PAY-103", 30.0505, 31.2305);
+      // Wallet starts at 0 — nowhere near the fare.
+
+      const trip = await makeCompletedTrip(rider, driver, "wallet");
+      expect(trip.status).toBe("paid");
+      expect(trip.paymentMethod).toBe("cash"); // rewritten by the fallback
+
+      const riderWallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: rider } });
+      expect(riderWallet.balance).toBe(0); // untouched — no debit was ever posted
+
+      const owe = await prisma.oweAmount.findUniqueOrThrow({ where: { driverId: driver } });
+      const commission = Math.round((trip.fareTotal! * 20) / 100);
+      expect(owe.amount).toBe(commission); // cash-style commission liability, same as a real cash trip
+
+      const notification = await prisma.notification.findFirst({ where: { userId: rider, title: "Wallet balance too low" } });
+      expect(notification).not.toBeNull();
+    });
+  });
+
+  describe("second gateway: Paystack (2.3)", () => {
+    it("requires the rider to have an email on file before routing through Paystack", async () => {
+      const rider = await makeRider("+201000099401");
+      await expect(initWalletTopup(rider, 1000, "EGP", "paystack")).rejects.toThrow(ValidationError);
+    });
+
+    it("creates a Payment tagged with the paystack gateway once the rider has an email", async () => {
+      const rider = await makeRider("+201000099402");
+      await prisma.user.update({ where: { id: rider }, data: { email: "rider402@example.com" } });
+
+      const result = await initWalletTopup(rider, 1200, "EGP", "paystack");
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: result.paymentId } });
+      expect(payment.gateway).toBe("paystack");
+      expect(payment.amount).toBe(1200);
+    });
+
+    it("credits the wallet from a Paystack-shaped (charge.success) webhook", async () => {
+      const rider = await makeRider("+201000099403");
+      await prisma.user.update({ where: { id: rider }, data: { email: "rider403@example.com" } });
+      const before = await prisma.wallet.findUniqueOrThrow({ where: { userId: rider } });
+
+      const { paymentId } = await initWalletTopup(rider, 600, "EGP", "paystack");
+      await handleWebhook("paystack", fakePaystackSucceededEvent({ paymentId, userId: rider, type: "wallet_topup" }), "sig");
+
+      const after = await prisma.wallet.findUniqueOrThrow({ where: { userId: rider } });
+      expect(after.balance).toBe(before.balance + 600);
+
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(payment.status).toBe("paid");
+    });
+
+    it("marks the payment failed on a charge.failed webhook, without touching the wallet", async () => {
+      const rider = await makeRider("+201000099404");
+      await prisma.user.update({ where: { id: rider }, data: { email: "rider404@example.com" } });
+      const before = await prisma.wallet.findUniqueOrThrow({ where: { userId: rider } });
+
+      const { paymentId } = await initWalletTopup(rider, 300, "EGP", "paystack");
+      await handleWebhook("paystack", fakePaystackFailedEvent({ paymentId }), "sig");
+
+      const after = await prisma.wallet.findUniqueOrThrow({ where: { userId: rider } });
+      expect(after.balance).toBe(before.balance);
+
+      const payment = await prisma.payment.findUniqueOrThrow({ where: { id: paymentId } });
+      expect(payment.status).toBe("failed");
     });
   });
 });

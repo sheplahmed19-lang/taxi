@@ -7,4 +7,5 @@ export const listTransactionsQuerySchema = z.object({
 export const topupInitSchema = z.object({
   amount: z.number().int().positive(),
   currency: z.string().length(3).optional(),
+  gateway: z.enum(["stripe", "paystack"]).optional(),
 });
