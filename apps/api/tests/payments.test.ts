@@ -306,7 +306,7 @@ describe("payments", () => {
       const rider = await makeRider("+201000099301");
       const driver = await makeOnlineDriver("+201000099302", "PAY-101", 30.0505, 31.2305);
 
-      const result = await settleWalletTripPayment("fake-trip-insufficient", rider, driver, 999999);
+      const result = await settleWalletTripPayment("fake-trip-insufficient", rider, driver, vehicleTypeId, 999999);
       expect(result.paid).toBe(false);
 
       const entries = await prisma.ledgerEntry.findMany({ where: { tripId: "fake-trip-insufficient" } });

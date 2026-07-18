@@ -93,7 +93,7 @@ describe("cash trip close-out", () => {
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: driver } });
     const before = wallet.balance;
 
-    await postCashTripEarnings(tripId, driver, 1000);
+    await postCashTripEarnings(tripId, driver, vehicleTypeId, 1000);
 
     const after = await prisma.wallet.findUniqueOrThrow({ where: { userId: driver } });
     // seeded commission_pct = 20 -> commission = 200
@@ -116,8 +116,8 @@ describe("cash trip close-out", () => {
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: driver } });
     const before = wallet.balance;
 
-    await postCashTripEarnings(tripId, driver, 1000);
-    await postCashTripEarnings(tripId, driver, 1000); // replay
+    await postCashTripEarnings(tripId, driver, vehicleTypeId, 1000);
+    await postCashTripEarnings(tripId, driver, vehicleTypeId, 1000); // replay
 
     const after = await prisma.wallet.findUniqueOrThrow({ where: { userId: driver } });
     expect(after.balance).toBe(before + 800); // not double-applied

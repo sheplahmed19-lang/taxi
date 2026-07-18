@@ -241,6 +241,10 @@ model VehicleType {
   nightStart      String?  @map("night_start")
   nightEnd        String?  @map("night_end")
   peakRules       Json?    @map("peak_rules")
+  // Overrides system_config's commission_pct for trips on this vehicle
+  // type. Null means "use the platform default" — see
+  // wallet/service.ts:resolveCommissionPct.
+  commissionPct   Int?     @map("commission_pct")
   active          Boolean  @default(true)
   createdAt       DateTime @default(now()) @map("created_at")
   updatedAt       DateTime @updatedAt @map("updated_at")

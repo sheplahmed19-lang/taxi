@@ -7,6 +7,7 @@ import { logger } from "../../shared/logger.js";
 import { ConflictError, NotFoundError, ForbiddenError, ValidationError } from "../../shared/errors.js";
 import { postEntry } from "../wallet/ledger.js";
 import { markTripPaid } from "../trips/service.js";
+import { activateSubscriptionFromPayment, getPlanOrThrow } from "../subscriptions/service.js";
 import { StripeGateway } from "./stripe.gateway.js";
 import { PaystackGateway } from "./paystack.gateway.js";
 import type { PaymentGateway } from "./gateway.interface.js";
@@ -148,6 +149,40 @@ export async function initRidePayment(
   return { paymentId: payment.id, clientSecret: intent.clientSecret, redirectUrl: intent.redirectUrl };
 }
 
+/**
+ * Async counterpart to subscriptions/service.ts:purchaseWithWallet — same
+ * plan, paid via a gateway charge instead of a wallet debit. The
+ * subscription is only granted once handleWebhook below sees the charge
+ * actually succeed, same as initRidePayment/markTripPaid.
+ */
+export async function initSubscriptionPayment(
+  driverId: string,
+  planId: string,
+  gatewayName: string = DEFAULT_GATEWAY,
+): Promise<{ paymentId: string; clientSecret?: string; redirectUrl?: string }> {
+  const plan = await getPlanOrThrow(planId);
+
+  const payment = await prisma.payment.create({
+    data: { userId: driverId, gateway: gatewayName, amount: plan.price, status: "pending" },
+  });
+
+  const intent = await getGateway(gatewayName).createIntent({
+    amount: plan.price,
+    currency: "EGP",
+    metadata: {
+      paymentId: payment.id,
+      driverId,
+      planId,
+      type: "subscription_purchase",
+      ...(await emailMetadataFor(gatewayName, driverId)),
+    },
+  });
+
+  await prisma.payment.update({ where: { id: payment.id }, data: { gatewayRef: intent.id } });
+
+  return { paymentId: payment.id, clientSecret: intent.clientSecret, redirectUrl: intent.redirectUrl };
+}
+
 interface NormalizedWebhookEvent {
   succeeded: boolean;
   failed: boolean;
@@ -238,6 +273,13 @@ export async function handleWebhook(gatewayName: string, rawBody: Buffer, signat
 
   if (payment.tripId) {
     await markTripPaid(payment.tripId, payment.amount);
+  } else if (normalized.metadata.type === "subscription_purchase") {
+    const planId = normalized.metadata.planId;
+    if (!planId) {
+      logger.warn({ paymentId: payment.id }, "subscription_purchase webhook missing planId metadata");
+      return;
+    }
+    await activateSubscriptionFromPayment(payment.userId, planId);
   } else {
     const wallet = await prisma.wallet.findUniqueOrThrow({ where: { userId: payment.userId } });
     await postEntry({

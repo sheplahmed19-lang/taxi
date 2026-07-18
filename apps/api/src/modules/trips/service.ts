@@ -363,10 +363,10 @@ export async function completeTrip(tripId: string, driverId: string) {
   // webhook -> markTripPaid above).
   let finalTrip = updated;
   if (trip.paymentMethod === "cash") {
-    await postCashTripEarnings(tripId, driverId, updated.fareTotal ?? 0);
+    await postCashTripEarnings(tripId, driverId, trip.vehicleTypeId, updated.fareTotal ?? 0);
     finalTrip = await transitionTrip(tripId, "payment_settled", { paymentStatus: "paid" });
   } else if (trip.paymentMethod === "wallet") {
-    const { paid } = await settleWalletTripPayment(tripId, trip.riderId, driverId, updated.fareTotal ?? 0);
+    const { paid } = await settleWalletTripPayment(tripId, trip.riderId, driverId, trip.vehicleTypeId, updated.fareTotal ?? 0);
     if (paid) {
       finalTrip = await transitionTrip(tripId, "payment_settled", { paymentStatus: "paid" });
     } else {
@@ -374,7 +374,7 @@ export async function completeTrip(tripId: string, driverId: string) {
       // the trip stuck unpaid. The driver still needs to collect physically,
       // so the rider (and CLAUDE.md rule 3-compliant commission tracking)
       // both need to reflect that the payment method actually changed.
-      await postCashTripEarnings(tripId, driverId, updated.fareTotal ?? 0);
+      await postCashTripEarnings(tripId, driverId, trip.vehicleTypeId, updated.fareTotal ?? 0);
       finalTrip = await transitionTrip(tripId, "payment_settled", {
         paymentStatus: "paid",
         paymentMethod: "cash",
@@ -417,7 +417,7 @@ export async function markTripPaid(tripId: string, amountPaid: number): Promise<
     throw new ConflictError("Trip has no assigned driver to settle payment to");
   }
 
-  await postElectronicTripEarnings(tripId, trip.driverId, amountPaid);
+  await postElectronicTripEarnings(tripId, trip.driverId, trip.vehicleTypeId, amountPaid);
   const updated = await transitionTrip(tripId, "payment_settled", { paymentStatus: "paid" });
 
   emitToTrip(tripId, "trip:status", { tripId, status: updated.status });

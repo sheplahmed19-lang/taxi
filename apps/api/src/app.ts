@@ -27,6 +27,7 @@ import { dispatchRouter } from "./modules/dispatch/index.js";
 import { faresRouter } from "./modules/fares/index.js";
 import { walletRouter } from "./modules/wallet/index.js";
 import { paymentsRouter } from "./modules/payments/index.js";
+import { subscriptionsRouter } from "./modules/subscriptions/index.js";
 import { payoutsRouter } from "./modules/payouts/index.js";
 import { promosRouter } from "./modules/promos/index.js";
 import { referralsRouter } from "./modules/referrals/index.js";
@@ -60,6 +61,7 @@ export function createApp(): express.Express {
   v1.use("/fares", faresRouter);
   v1.use("/wallet", walletRouter);
   v1.use("/payments", paymentsRouter);
+  v1.use("/subscriptions", subscriptionsRouter);
   v1.use("/payouts", payoutsRouter);
   v1.use("/promos", promosRouter);
   v1.use("/referrals", referralsRouter);
