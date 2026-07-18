@@ -3,12 +3,35 @@ import { asyncHandler } from "../../shared/asyncHandler.js";
 import { requireAuth, requireRole } from "../../middleware/auth.js";
 import { upload } from "../../middleware/upload.js";
 import { ValidationError } from "../../shared/errors.js";
-import { registerDriverSchema, uploadDocumentSchema } from "./schemas.js";
-import { getDriverProfile, registerDriver, uploadDriverDocument } from "./service.js";
+import {
+  nearbyDriversQuerySchema,
+  registerDriverSchema,
+  setAvailabilitySchema,
+  uploadDocumentSchema,
+} from "./schemas.js";
+import {
+  findNearbyDrivers,
+  getDriverProfile,
+  registerDriver,
+  setAvailability,
+  uploadDriverDocument,
+} from "./service.js";
 
 export const driversRouter = Router();
 
-driversRouter.use(requireAuth, requireRole("driver"));
+driversRouter.use(requireAuth);
+
+// Open to any authenticated role — the rider app map calls this too.
+driversRouter.get(
+  "/nearby",
+  asyncHandler(async (req, res) => {
+    const { lat, lng, vehicleTypeId, radiusKm } = nearbyDriversQuerySchema.parse(req.query);
+    const drivers = await findNearbyDrivers({ lat, lng }, vehicleTypeId, radiusKm);
+    res.json({ success: true, data: { drivers } });
+  }),
+);
+
+driversRouter.use(requireRole("driver"));
 
 driversRouter.get(
   "/me",
@@ -36,6 +59,15 @@ driversRouter.post(
     }
     const { type } = uploadDocumentSchema.parse(req.body);
     const profile = await uploadDriverDocument(req.user!.id, type, req.file);
+    res.json({ success: true, data: profile });
+  }),
+);
+
+driversRouter.post(
+  "/availability",
+  asyncHandler(async (req, res) => {
+    const { online } = setAvailabilitySchema.parse(req.body);
+    const profile = await setAvailability(req.user!.id, online);
     res.json({ success: true, data: profile });
   }),
 );

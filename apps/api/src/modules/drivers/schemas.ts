@@ -17,3 +17,14 @@ export const documentTypeSchema = z.enum(["license", "national_id", "vehicle_reg
 export const uploadDocumentSchema = z.object({
   type: documentTypeSchema,
 });
+
+export const setAvailabilitySchema = z.object({
+  online: z.boolean(),
+});
+
+export const nearbyDriversQuerySchema = z.object({
+  lat: z.coerce.number().min(-90).max(90),
+  lng: z.coerce.number().min(-180).max(180),
+  vehicleTypeId: z.string().uuid().optional(),
+  radiusKm: z.coerce.number().positive().max(50).optional(),
+});

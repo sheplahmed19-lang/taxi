@@ -1,8 +1,10 @@
 // drivers module service — business logic lives here.
 // Other modules must only import from this file, never from routes.ts or internals.
 import { prisma } from "../../db/index.js";
+import { redis } from "../../shared/redis.js";
 import { uploadObject } from "../../shared/storage.js";
-import { NotFoundError } from "../../shared/errors.js";
+import { getConfigValue } from "../../shared/config.js";
+import { ForbiddenError, NotFoundError } from "../../shared/errors.js";
 
 export interface RegisterDriverInput {
   name?: string;
@@ -82,4 +84,164 @@ export async function getDriverProfile(userId: string) {
     throw new NotFoundError("Driver profile not found");
   }
   return profile;
+}
+
+function geoSetKey(vehicleTypeId: string): string {
+  return `drivers:online:${vehicleTypeId}`;
+}
+
+function stateKey(driverId: string): string {
+  return `driver:${driverId}:state`;
+}
+
+async function canGoOnline(driverId: string, verificationStatus: string): Promise<{ allowed: boolean; reason?: string }> {
+  if (verificationStatus !== "approved") {
+    return { allowed: false, reason: "Driver is not verified" };
+  }
+
+  const oweThreshold = await getConfigValue("owe_block_threshold", 10000);
+  const owe = await prisma.oweAmount.findUnique({ where: { driverId } });
+  if (owe && owe.amount > oweThreshold) {
+    return { allowed: false, reason: "Outstanding balance exceeds the allowed threshold — settle your owe amount first" };
+  }
+
+  return { allowed: true };
+}
+
+/**
+ * Toggles online/offline. Going online is blocked if the driver isn't
+ * verified, has no registered vehicle, or owes more than the configured
+ * threshold. Going offline removes the driver from the live GEO index.
+ */
+export async function setAvailability(userId: string, online: boolean) {
+  const profile = await prisma.driverProfile.findUnique({
+    where: { userId },
+    include: { currentVehicle: true },
+  });
+  if (!profile) {
+    throw new NotFoundError("Driver profile not found — register first");
+  }
+
+  if (online) {
+    if (!profile.currentVehicle) {
+      throw new ForbiddenError("Register a vehicle before going online");
+    }
+    const check = await canGoOnline(userId, profile.verificationStatus);
+    if (!check.allowed) {
+      throw new ForbiddenError(check.reason);
+    }
+  } else {
+    if (profile.currentVehicle) {
+      await redis.zrem(geoSetKey(profile.currentVehicle.vehicleTypeId), userId);
+    }
+    await redis.del(stateKey(userId));
+  }
+
+  return prisma.driverProfile.update({
+    where: { userId },
+    data: { online },
+    include: { currentVehicle: { include: { vehicleType: true } } },
+  });
+}
+
+export interface DriverLocationInput {
+  lat: number;
+  lng: number;
+  heading?: number;
+  speed?: number;
+  ts?: number;
+}
+
+/**
+ * Records a live location ping: GEOADD into the per-vehicle-type set and a
+ * state hash for fast lookups. Pings from a driver who isn't marked online
+ * (or has no registered vehicle) are silently ignored.
+ */
+export async function recordLocation(userId: string, location: DriverLocationInput): Promise<void> {
+  const profile = await prisma.driverProfile.findUnique({
+    where: { userId },
+    include: { currentVehicle: true },
+  });
+  if (!profile?.online || !profile.currentVehicle) {
+    return;
+  }
+
+  const vehicleTypeId = profile.currentVehicle.vehicleTypeId;
+  await redis.geoadd(geoSetKey(vehicleTypeId), location.lng, location.lat, userId);
+  await redis.hset(stateKey(userId), {
+    lat: String(location.lat),
+    lng: String(location.lng),
+    heading: String(location.heading ?? 0),
+    speed: String(location.speed ?? 0),
+    ts: String(location.ts ?? Date.now()),
+    vehicleTypeId,
+  });
+}
+
+/** Removes a driver from the live GEO index and marks them offline in the DB. */
+export async function markOffline(userId: string): Promise<void> {
+  const profile = await prisma.driverProfile.findUnique({
+    where: { userId },
+    include: { currentVehicle: true },
+  });
+  if (!profile) {
+    return;
+  }
+
+  if (profile.currentVehicle) {
+    await redis.zrem(geoSetKey(profile.currentVehicle.vehicleTypeId), userId);
+  }
+  await redis.del(stateKey(userId));
+
+  if (profile.online) {
+    await prisma.driverProfile.update({ where: { userId }, data: { online: false } });
+  }
+}
+
+export interface NearbyDriver {
+  driverId: string;
+  vehicleTypeId: string;
+  lat: number;
+  lng: number;
+  heading: number;
+}
+
+/** Anonymized nearby car positions for the rider app map — no driver identity beyond a marker key. */
+export async function findNearbyDrivers(
+  point: { lat: number; lng: number },
+  vehicleTypeId?: string,
+  radiusKm?: number,
+): Promise<NearbyDriver[]> {
+  const radius = radiusKm ?? (await getConfigValue("dispatch_radius_km", 5));
+  const vehicleTypeIds = vehicleTypeId
+    ? [vehicleTypeId]
+    : (await prisma.vehicleType.findMany({ where: { active: true }, select: { id: true } })).map((v) => v.id);
+
+  const results: NearbyDriver[] = [];
+
+  for (const vtId of vehicleTypeIds) {
+    const matches = (await redis.geosearch(
+      geoSetKey(vtId),
+      "FROMLONLAT",
+      point.lng,
+      point.lat,
+      "BYRADIUS",
+      radius,
+      "km",
+      "WITHCOORD",
+    )) as Array<[string, [string, string]]>;
+
+    for (const [driverId, [lng, lat]] of matches) {
+      const heading = await redis.hget(stateKey(driverId), "heading");
+      results.push({
+        driverId,
+        vehicleTypeId: vtId,
+        lat: parseFloat(lat),
+        lng: parseFloat(lng),
+        heading: heading ? parseFloat(heading) : 0,
+      });
+    }
+  }
+
+  return results;
 }

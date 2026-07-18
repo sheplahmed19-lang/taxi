@@ -4,6 +4,8 @@ import { logger } from "../shared/logger.js";
 import { redis } from "../shared/redis.js";
 import { verifyAccessToken } from "../modules/auth/tokens.js";
 import type { AuthUser } from "../middleware/auth.js";
+import { recordLocation, setAvailability, type DriverLocationInput } from "../modules/drivers/service.js";
+import { scheduleOfflineGraceCheck } from "../jobs/driverOfflineGrace.js";
 
 /**
  * Socket.IO server bootstrap. Namespaces/rooms/events per docs/socket-events.md
@@ -52,9 +54,32 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
 
     // Trip rooms (trip:{id}) are joined once the trips module exists — Phase 1.4/1.5.
 
+    if (user.role === "driver") {
+      socket.on("driver:availability", (payload: { online: boolean }) => {
+        setAvailability(user.id, Boolean(payload?.online)).catch((err: unknown) => {
+          logger.warn({ err, driverId: user.id }, "driver:availability failed");
+        });
+      });
+
+      socket.on("driver:location", (payload: DriverLocationInput) => {
+        recordLocation(user.id, payload).catch((err: unknown) => {
+          logger.warn({ err, driverId: user.id }, "driver:location failed");
+        });
+      });
+    }
+
     socket.on("disconnect", () => {
-      void redis.srem(userSocketsKey(user.id), socket.id);
-      void redis.del(socketKey(socket.id));
+      void (async () => {
+        await redis.srem(userSocketsKey(user.id), socket.id);
+        await redis.del(socketKey(socket.id));
+
+        if (user.role === "driver") {
+          const remaining = await redis.scard(userSocketsKey(user.id));
+          if (remaining === 0) {
+            await scheduleOfflineGraceCheck(user.id);
+          }
+        }
+      })();
     });
   });
 
