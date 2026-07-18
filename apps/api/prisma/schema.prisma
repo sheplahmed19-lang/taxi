@@ -293,8 +293,9 @@ model Trip {
   paymentStatus PaymentStatus? @default(pending) @map("payment_status")
   promoId       String?       @map("promo_id")
   promo         PromoCode?    @relation(fields: [promoId], references: [id])
-  cancelledBy   CancelledBy?  @map("cancelled_by")
-  cancelReason  String?       @map("cancel_reason")
+  cancelledBy     CancelledBy? @map("cancelled_by")
+  cancelReason    String?      @map("cancel_reason")
+  cancellationFee Int?         @map("cancellation_fee")
 
   requestedAt DateTime? @map("requested_at")
   acceptedAt  DateTime? @map("accepted_at")

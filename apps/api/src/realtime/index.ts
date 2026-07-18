@@ -52,8 +52,6 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
     void redis.set(socketKey(socket.id), user.id);
     logger.debug({ socketId: socket.id, userId: user.id }, "socket connected on /app");
 
-    // Trip rooms (trip:{id}) are joined once the trips module exists — Phase 1.4/1.5.
-
     if (user.role === "driver") {
       socket.on("driver:availability", (payload: { online: boolean }) => {
         setAvailability(user.id, Boolean(payload?.online)).catch((err: unknown) => {
@@ -65,6 +63,14 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
         recordLocation(user.id, payload).catch((err: unknown) => {
           logger.warn({ err, driverId: user.id }, "driver:location failed");
         });
+
+        // Dynamic import: trips/service.ts imports emitToTrip from this
+        // file, so a static top-level import here would create a cycle.
+        import("../modules/trips/service.js")
+          .then(({ relayAndRecordTripLocation }) => relayAndRecordTripLocation(user.id, payload))
+          .catch((err: unknown) => {
+            logger.warn({ err, driverId: user.id }, "trip location relay failed");
+          });
       });
 
       socket.on("trip:driver_response", (payload: { tripId: string; accept: boolean }) => {
@@ -126,4 +132,13 @@ export function emitToTrip(tripId: string, event: string, payload: unknown): voi
 
 export function emitToAdmins(event: string, payload: unknown): void {
   io?.of("/admin").to("admin:live").emit(event, payload);
+}
+
+/** Moves every socket a user currently has open on /app into the trip:{id} room. */
+export function joinTripRoom(userId: string, tripId: string): void {
+  void io?.of("/app").in(`user:${userId}`).socketsJoin(`trip:${tripId}`);
+}
+
+export function leaveTripRoom(userId: string, tripId: string): void {
+  void io?.of("/app").in(`user:${userId}`).socketsLeave(`trip:${tripId}`);
 }

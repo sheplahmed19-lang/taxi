@@ -44,4 +44,4 @@ Postgres+PostGIS, Redis, Socket.IO realtime, React admin panels, FCM push.
   dispatch ranking logic, promo validation.
 
 ## Current phase
-Update this line as you progress: **Phase 1 — Core Ride Loop (1.4 trip creation + dispatch engine done, next: 1.5 trip lifecycle)**
+Update this line as you progress: **Phase 1 — Core Ride Loop (1.5 trip lifecycle done, next: 1.6 rider app ride flow / 1.7 driver app ride flow — UI screens, need a real Flutter SDK to build/verify)**

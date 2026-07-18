@@ -21,7 +21,7 @@ function cacheKey(pickup: LatLng, drop: LatLng): string {
   return `route:${round(pickup.lat)},${round(pickup.lng)}:${round(drop.lat)},${round(drop.lng)}`;
 }
 
-function haversineMeters(a: LatLng, b: LatLng): number {
+export function haversineMeters(a: LatLng, b: LatLng): number {
   const R = 6_371_000;
   const toRad = (deg: number) => (deg * Math.PI) / 180;
   const dLat = toRad(b.lat - a.lat);

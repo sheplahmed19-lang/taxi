@@ -72,3 +72,32 @@ export async function estimateFares(
     }),
   }));
 }
+
+/**
+ * Final fare at trip completion, from actually-measured distance/duration
+ * (as opposed to estimateFares' pre-trip route estimate). Used by
+ * trips/service.ts:completeTrip.
+ */
+export async function calculateFinalFare(
+  pickup: LatLng,
+  vehicleTypeId: string,
+  distanceM: number,
+  durationS: number,
+): Promise<FareBreakdown> {
+  const [zone, vehicleType] = await Promise.all([
+    findZoneContaining(pickup),
+    prisma.vehicleType.findUnique({ where: { id: vehicleTypeId } }),
+  ]);
+
+  if (!vehicleType) {
+    throw new NotFoundError("Vehicle type not found");
+  }
+
+  return calculateFare({
+    vehicleType: toEngineVehicleType(vehicleType),
+    zoneOverrides: zone?.fareOverrides ?? undefined,
+    distanceM,
+    durationS,
+    timestamp: new Date(),
+  });
+}

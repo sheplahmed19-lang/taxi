@@ -7,7 +7,7 @@ import { logger } from "../../shared/logger.js";
 import { getConfigValue } from "../../shared/config.js";
 import { getRoute } from "../../shared/maps.js";
 import { sendPushToUser } from "../../shared/fcm.js";
-import { emitToUser } from "../../realtime/index.js";
+import { emitToUser, joinTripRoom } from "../../realtime/index.js";
 import { geoSetKey, getDriverState } from "../drivers/service.js";
 import { createTripRecord, getTripPickupPoint, transitionTrip, type CreateTripInput } from "../trips/service.js";
 import { scheduleDispatchTimeout } from "../../jobs/dispatchTimeout.js";
@@ -235,11 +235,14 @@ export async function handleDriverResponse(tripId: string, driverId: string, acc
   await redis.del(driverLockKey(driverId));
   await redis.del(offeredSetKey(tripId));
 
-  // Busy with this trip now — pulled from the live GEO index. Re-added once
-  // trip completion exists (Phase 1.5/1.8).
+  // Busy with this trip now — pulled from the live GEO index. Re-added by
+  // trips/service.ts:completeTrip once they drop the rider off.
   if (driverProfile?.currentVehicle) {
     await redis.zrem(geoSetKey(driverProfile.currentVehicle.vehicleTypeId), driverId);
   }
+
+  joinTripRoom(trip.riderId, tripId);
+  joinTripRoom(driverId, tripId);
 
   const [driverState, pickup, driverUser] = await Promise.all([
     getDriverState(driverId),
