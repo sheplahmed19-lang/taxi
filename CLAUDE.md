@@ -44,7 +44,7 @@ Postgres+PostGIS, Redis, Socket.IO realtime, React admin panels, FCM push.
   dispatch ranking logic, promo validation.
 
 ## Current phase
-Update this line as you progress: **Phase 1 — Core Ride Loop (1.5/1.6/1.7/1.8 done — full rider+driver ride flow UI built and verified with a real Flutter SDK (`flutter analyze` + `flutter test`, no Android/iOS/emulator available in this sandbox so on-device UI is unverified). Next: Phase 1 acceptance milestone — needs a real device/emulator with two phones to actually verify end-to-end, then Phase 2 Money Layer.)**
+Update this line as you progress: **Phase 1 done (1.1–1.8; the acceptance milestone itself needs a real device/emulator with two phones, unavailable in this sandbox). Phase 2 — Money Layer: 2.1 wallet+ledger hardening done (GET /wallet/balance, GET /wallet/transactions cursor-paginated; postEntry() row-locking/idempotency/negative-balance rejection were already hardened in 1.8). Next: 2.2 payment gateway abstraction + Stripe.**
 
 ## Flutter SDK
 No Flutter SDK ships with this environment by default. It was cloned into `/tmp/flutter-sdk`
