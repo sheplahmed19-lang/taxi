@@ -10,9 +10,16 @@ import { emitToTrip, emitToUser } from "../../realtime/index.js";
 import { redis } from "../../shared/redis.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
 import { calculateFinalFare, estimateFares } from "../fares/service.js";
+import { applyPromoDiscount } from "../fares/engine.js";
 import { geoSetKey, getDriverState } from "../drivers/service.js";
 import { postCashTripEarnings, postElectronicTripEarnings, settleWalletTripPayment } from "../wallet/service.js";
 import { sendToUser } from "../notifications/service.js";
+import {
+  getPromoDiscountTerms,
+  recordPromoRedemption,
+  releasePromoRedemption,
+  resolveAndValidatePromo,
+} from "../promos/service.js";
 import { nextStatus, type TripEvent, type TripStatus } from "./state-machine.js";
 
 const ACTIVE_TRIP_EXCLUDED_STATUSES: TripStatus[] = [
@@ -28,12 +35,18 @@ export interface CreateTripInput {
   drop: { lat: number; lng: number; address?: string };
   vehicleTypeId: string;
   paymentMethod: "cash" | "wallet" | "card";
+  promoCode?: string;
 }
 
 /**
  * Creates the Trip row in `requested` status: snapshots a fare estimate
  * (fares/service.ts) and generates the pickup OTP. Does not touch dispatch —
  * see dispatch/service.ts:requestTrip for the create+dispatch orchestration.
+ *
+ * An optional promoCode is validated against this same estimate (promos
+ * module owns eligibility rules) and, if it passes, its discount is folded
+ * into the stored breakdown/total before the trip is created — this is
+ * Phase 3.1's "apply-at-estimate" behavior.
  */
 export async function createTripRecord(riderId: string, input: CreateTripInput) {
   const active = await prisma.trip.findFirst({
@@ -46,6 +59,20 @@ export async function createTripRecord(riderId: string, input: CreateTripInput) 
   const [estimate] = await estimateFares(input.pickup, input.drop, input.vehicleTypeId);
   if (!estimate) {
     throw new NotFoundError("Vehicle type not found or inactive");
+  }
+
+  let fareBreakdown = estimate.breakdown;
+  let promoId: string | undefined;
+  if (input.promoCode) {
+    const promo = await resolveAndValidatePromo(input.promoCode, {
+      userId: riderId,
+      vehicleTypeId: input.vehicleTypeId,
+      pickup: input.pickup,
+      preDiscountFare: estimate.breakdown.total,
+    });
+    const { promoDiscount, total } = applyPromoDiscount(estimate.breakdown.total, promo);
+    fareBreakdown = { ...estimate.breakdown, promoDiscount, total };
+    promoId = promo.id;
   }
 
   const otpLength = await getConfigValue("otp_length", 4);
@@ -61,10 +88,11 @@ export async function createTripRecord(riderId: string, input: CreateTripInput) 
       otp,
       distanceM: estimate.distanceM,
       durationS: estimate.durationS,
-      fareBreakdown: estimate.breakdown as unknown as Prisma.InputJsonValue,
-      fareTotal: estimate.breakdown.total,
+      fareBreakdown: fareBreakdown as unknown as Prisma.InputJsonValue,
+      fareTotal: fareBreakdown.total,
       paymentMethod: input.paymentMethod,
       paymentStatus: "pending",
+      promoId,
       requestedAt: new Date(),
     },
   });
@@ -76,7 +104,66 @@ export async function createTripRecord(riderId: string, input: CreateTripInput) 
     WHERE id = ${trip.id}
   `;
 
+  if (promoId) {
+    await recordPromoRedemption(promoId, riderId, trip.id);
+  }
+
   return trip;
+}
+
+/**
+ * Attaches a promo to a trip after it's already been created (rider decided
+ * to add a code while waiting for a driver) but before it starts — once a
+ * driver is en route/on-trip the fare is close to being locked in anyway.
+ * Re-validates eligibility against the trip's own vehicle type/pickup/fare
+ * (limits can have moved since the code was typed), then patches the stored
+ * breakdown/total exactly like the at-creation path.
+ */
+export async function applyPromoToTrip(tripId: string, riderId: string, code: string) {
+  const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+  if (!trip) {
+    throw new NotFoundError("Trip not found");
+  }
+  if (trip.riderId !== riderId) {
+    throw new ForbiddenError("Not your trip");
+  }
+  if (!["requested", "searching", "accepted", "arrived"].includes(trip.status)) {
+    throw new ConflictError("Promo codes can only be applied before the trip starts");
+  }
+  if (trip.promoId) {
+    throw new ConflictError("A promo code is already applied to this trip");
+  }
+
+  const pickup = await getTripPickupPoint(tripId);
+  if (!pickup) {
+    throw new ConflictError("Trip has no pickup location on record");
+  }
+
+  const preDiscountTotal = trip.fareTotal ?? 0;
+  const promo = await resolveAndValidatePromo(code, {
+    userId: riderId,
+    vehicleTypeId: trip.vehicleTypeId,
+    pickup,
+    preDiscountFare: preDiscountTotal,
+  });
+
+  const { promoDiscount, total } = applyPromoDiscount(preDiscountTotal, promo);
+  const fareBreakdown = { ...(trip.fareBreakdown as Record<string, unknown>), promoDiscount, total };
+
+  const updated = await prisma.trip.update({
+    where: { id: tripId },
+    data: {
+      promoId: promo.id,
+      fareTotal: total,
+      fareBreakdown: fareBreakdown as unknown as Prisma.InputJsonValue,
+    },
+  });
+
+  await recordPromoRedemption(promo.id, riderId, tripId);
+
+  emitToTrip(tripId, "trip:fare_updated", { tripId, fareBreakdown, fareTotal: total });
+
+  return updated;
 }
 
 export async function getTripPickupPoint(tripId: string): Promise<{ lat: number; lng: number } | null> {
@@ -330,8 +417,9 @@ export async function completeTrip(tripId: string, driverId: string) {
   }
 
   const pickup = await getTripPickupPoint(tripId);
+  const promoTerms = trip.promoId ? await getPromoDiscountTerms(trip.promoId) : null;
   const breakdown = pickup
-    ? await calculateFinalFare(pickup, trip.vehicleTypeId, distanceM, durationS)
+    ? await calculateFinalFare(pickup, trip.vehicleTypeId, distanceM, durationS, promoTerms ?? undefined)
     : null;
 
   const updated = await transitionTrip(tripId, "trip_complete", {
@@ -454,6 +542,11 @@ export async function cancelTrip(tripId: string, userId: string, reason: string)
     cancelReason: reason,
     ...(cancellationFee !== null ? { cancellationFee } : {}),
   });
+
+  if (trip.promoId) {
+    // Frees the usage-limit slot — a cancelled ride never actually redeemed the promo.
+    await releasePromoRedemption(tripId);
+  }
 
   const otherPartyId = isRider ? trip.driverId : trip.riderId;
   if (otherPartyId) {

@@ -100,6 +100,28 @@ function resolveNightOrPeakMultiplier(
   return 1;
 }
 
+/**
+ * Isolated from calculateFare so callers that already hold a pre-discount
+ * total (e.g. trips/service.ts re-locking a promo's terms against a
+ * newly-measured final fare at trip completion, without re-running the
+ * whole route/zone/night-window pipeline) can apply the same capping rules
+ * without duplicating them.
+ */
+export function applyPromoDiscount(
+  preDiscountTotal: number,
+  promo?: FareEngineInput["promo"],
+): { promoDiscount: number; total: number } {
+  if (!promo) {
+    return { promoDiscount: 0, total: preDiscountTotal };
+  }
+
+  const raw = promo.type === "flat" ? promo.value : Math.round(preDiscountTotal * (promo.value / 100));
+  const capped = promo.maxDiscount !== undefined ? Math.min(raw, promo.maxDiscount) : raw;
+  const promoDiscount = Math.min(capped, preDiscountTotal);
+
+  return { promoDiscount, total: Math.max(preDiscountTotal - promoDiscount, 0) };
+}
+
 export function calculateFare(input: FareEngineInput): FareBreakdown {
   const effective = { ...input.vehicleType, ...input.zoneOverrides };
   const currency = input.currency ?? "EGP";
@@ -114,17 +136,7 @@ export function calculateFare(input: FareEngineInput): FareBreakdown {
   const rawTotal = Math.round((base + distanceFare + timeFare) * nightOrPeakMultiplier * surge);
   const preDiscountTotal = Math.max(rawTotal, effective.minFare);
 
-  let promoDiscount = 0;
-  if (input.promo) {
-    const raw =
-      input.promo.type === "flat"
-        ? input.promo.value
-        : Math.round(preDiscountTotal * (input.promo.value / 100));
-    const capped = input.promo.maxDiscount !== undefined ? Math.min(raw, input.promo.maxDiscount) : raw;
-    promoDiscount = Math.min(capped, preDiscountTotal);
-  }
-
-  const total = Math.max(preDiscountTotal - promoDiscount, 0);
+  const { promoDiscount, total } = applyPromoDiscount(preDiscountTotal, input.promo);
 
   return {
     base,

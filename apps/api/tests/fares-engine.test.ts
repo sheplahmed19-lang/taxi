@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { calculateFare, type FareEngineInput } from "../src/modules/fares/engine.js";
+import { applyPromoDiscount, calculateFare, type FareEngineInput } from "../src/modules/fares/engine.js";
 
 const baseVehicleType: FareEngineInput["vehicleType"] = {
   baseFare: 500,
@@ -167,6 +167,28 @@ describe("fares/engine calculateFare", () => {
     it("applies no discount when promo is null", () => {
       const result = calculateFare(baseInput({ promo: null }));
       expect(result.promoDiscount).toBe(0);
+    });
+  });
+
+  // applyPromoDiscount is calculateFare's promo math, factored out so
+  // trips/service.ts can re-apply a trip's already-attached promo against a
+  // freshly-measured completion total without re-running the whole
+  // route/zone/night-window pipeline (Phase 3.1's "lock-at-completion").
+  describe("applyPromoDiscount (standalone)", () => {
+    it("matches calculateFare's discount for the same pre-discount total", () => {
+      const viaEngine = calculateFare(baseInput({ promo: { type: "percent", value: 10 } }));
+      const standalone = applyPromoDiscount(1450, { type: "percent", value: 10 });
+      expect(standalone.promoDiscount).toBe(viaEngine.promoDiscount);
+      expect(standalone.total).toBe(viaEngine.total);
+    });
+
+    it("returns a zero discount and the input total unchanged when promo is omitted", () => {
+      expect(applyPromoDiscount(1450)).toEqual({ promoDiscount: 0, total: 1450 });
+    });
+
+    it("never discounts below zero", () => {
+      const result = applyPromoDiscount(100, { type: "flat", value: 500 });
+      expect(result).toEqual({ promoDiscount: 100, total: 0 });
     });
   });
 

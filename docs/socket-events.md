@@ -22,6 +22,7 @@ Rooms: `user:{id}`, `trip:{id}`, `admin:live`
 | `trip:accepted` | `{trip, driver, vehicle, eta}` | rider | |
 | `trip:driver_location` | `{lat,lng,heading,eta}` | trip room | |
 | `trip:status` | `{tripId, status, payload}` | trip room | arrived/started/completed/cancelled |
+| `trip:fare_updated` | `{tripId, fareBreakdown, fareTotal}` | trip room | a promo code was applied via `POST /promos/apply` after trip creation |
 | `trip:no_drivers` | `{tripId}` | rider | |
 | `chat:message` | `{tripId, message}` | trip room | |
 | `notification` | `{title, body, data}` | user room | |

@@ -11,6 +11,7 @@ export const createTripSchema = z.object({
   drop: locationSchema,
   vehicleTypeId: z.string().uuid(),
   paymentMethod: z.enum(["cash", "wallet", "card"]),
+  promoCode: z.string().min(1).max(20).optional(),
 });
 
 export const startTripSchema = z.object({

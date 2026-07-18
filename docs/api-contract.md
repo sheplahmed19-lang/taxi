@@ -10,7 +10,8 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              settles the full outstanding amount from the driver's own wallet)
 /vehicles    types (list, any authenticated role), CRUD (admin, not yet implemented)
 /fares       estimate
-/trips       create, :id, :id/accept|arrive|start|complete|cancel, :id/rate, history, :id/track (public token)
+/trips       create (body may include promoCode, applied atomically with the fare estimate),
+             :id, :id/accept|arrive|start|complete|cancel, :id/rate, history, :id/track (public token)
 /scheduled   CRUD
 /wallet      balance, transactions (cursor pagination), topup/init (body: {amount, currency?, gateway?} —
              gateway is "stripe" (default) or "paystack"); wallet is also a trip paymentMethod, settled
@@ -25,7 +26,9 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              expiry job flips them back to commission-based earning and notifies them.
 /payouts     request (body: {amount} — reserved out of the wallet immediately, refunded on
              reject), me (list own); admin approve/reject(reason)/paid(method) under /admin
-/promos      validate, apply; admin CRUD
+/promos      validate (body: {code, pickup, drop, vehicleTypeId} — no side effects, safe to
+             call on every keystroke), apply (body: {tripId, code} — attaches a code to an
+             already-created trip before it starts); admin CRUD under /admin/promos
 /referrals   my-code, stats
 /chat        :tripId/messages
 /admin       dashboard, drivers, users, staff, roles, zones, config,
@@ -33,8 +36,20 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              subscriptions/plans (POST), subscriptions/plans/:id (PATCH),
              payouts (list, filter by status), payouts/:id/approve|reject|paid,
              owe (report of drivers with a positive balance), owe/:driverId/adjust
-             (body: {delta, reason} — signed delta, clamped at 0, audit-logged)
+             (body: {delta, reason} — signed delta, clamped at 0, audit-logged),
+             promos (POST create, PATCH :id update, DELETE :id — blocked once redeemed,
+             deactivate instead)
 ```
+
+Promo codes: eligibility (active window, min fare, vehicle type/zone allow-lists, overall
+and per-user usage limits) is checked once when a code is attached to a trip — either at
+creation (`POST /trips` with `promoCode`) or afterward via `POST /promos/apply`, both before
+the trip starts. A `PromoRedemption` row is written at that moment, which is what usage
+limits actually count against; cancelling the trip deletes it again, freeing the slot. At
+completion, `trips/service.ts:completeTrip` re-applies the *same* promo's raw discount terms
+against the newly-measured final fare without re-checking eligibility (`fares/engine.ts`'s
+`applyPromoDiscount`) — a promo attached mid-trip stays honored through completion even if
+its window elapses or another rider exhausts its usage limit while this trip is in progress.
 
 Weekly driver statements: a Monday-00:00 BullMQ cron
 (`jobs/weeklyStatements.ts:scheduleWeeklyStatementsCron`) generates a CSV per

@@ -2,7 +2,7 @@
 // Other modules must only import from this file, never from routes.ts or internals.
 import type { VehicleType } from "@prisma/client";
 import { prisma } from "../../db/index.js";
-import { calculateFare, type FareBreakdown, type PeakRule } from "./engine.js";
+import { calculateFare, type FareBreakdown, type FareEngineInput, type PeakRule } from "./engine.js";
 import { findZoneContaining } from "../zones/service.js";
 import { getRoute, type LatLng } from "../../shared/maps.js";
 import { NoRouteFoundError, NotFoundError } from "../../shared/errors.js";
@@ -12,6 +12,7 @@ export interface FareEstimate {
   vehicleTypeName: string;
   distanceM: number;
   durationS: number;
+  zoneId: string | null;
   breakdown: FareBreakdown;
 }
 
@@ -63,6 +64,7 @@ export async function estimateFares(
     vehicleTypeName: vt.name,
     distanceM: route.distanceM,
     durationS: route.durationS,
+    zoneId: zone?.id ?? null,
     breakdown: calculateFare({
       vehicleType: toEngineVehicleType(vt),
       zoneOverrides: zone?.fareOverrides ?? undefined,
@@ -77,12 +79,19 @@ export async function estimateFares(
  * Final fare at trip completion, from actually-measured distance/duration
  * (as opposed to estimateFares' pre-trip route estimate). Used by
  * trips/service.ts:completeTrip.
+ *
+ * `promo`, when passed, is the trip's already-attached promo's raw terms —
+ * re-applied against the newly-measured total but never re-validated
+ * (limits/windows/zone eligibility were already checked once, when the
+ * promo was attached; "locking" it means completion honors that decision
+ * regardless of what may have changed about the promo since).
  */
 export async function calculateFinalFare(
   pickup: LatLng,
   vehicleTypeId: string,
   distanceM: number,
   durationS: number,
+  promo?: FareEngineInput["promo"],
 ): Promise<FareBreakdown> {
   const [zone, vehicleType] = await Promise.all([
     findZoneContaining(pickup),
@@ -99,5 +108,6 @@ export async function calculateFinalFare(
     distanceM,
     durationS,
     timestamp: new Date(),
+    promo,
   });
 }

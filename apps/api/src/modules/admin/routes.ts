@@ -3,6 +3,8 @@ import { asyncHandler } from "../../shared/asyncHandler.js";
 import { requireAuth, requireRole } from "../../middleware/auth.js";
 import { listPayoutsQuerySchema, markPayoutPaidSchema, rejectPayoutSchema } from "../payouts/schemas.js";
 import { approvePayout, listPayouts, markPayoutPaid, rejectPayout } from "../payouts/service.js";
+import { createPromoSchema, updatePromoSchema } from "../promos/schemas.js";
+import { createPromo, deletePromo, listPromos, updatePromo } from "../promos/service.js";
 import { createPlanSchema, updatePlanSchema } from "../subscriptions/schemas.js";
 import { createPlan, updatePlan } from "../subscriptions/service.js";
 import { adjustOwe, listOweReport } from "../wallet/service.js";
@@ -89,6 +91,40 @@ adminRouter.post(
     const { method } = markPayoutPaidSchema.parse(req.body);
     const payout = await markPayoutPaid(req.params.id as string, req.user!.id, method);
     res.json({ success: true, data: payout });
+  }),
+);
+
+adminRouter.get(
+  "/promos",
+  asyncHandler(async (_req, res) => {
+    const promos = await listPromos();
+    res.json({ success: true, data: { promos } });
+  }),
+);
+
+adminRouter.post(
+  "/promos",
+  asyncHandler(async (req, res) => {
+    const data = createPromoSchema.parse(req.body);
+    const promo = await createPromo(data);
+    res.status(201).json({ success: true, data: promo });
+  }),
+);
+
+adminRouter.patch(
+  "/promos/:id",
+  asyncHandler(async (req, res) => {
+    const data = updatePromoSchema.parse(req.body);
+    const promo = await updatePromo(req.params.id as string, data);
+    res.json({ success: true, data: promo });
+  }),
+);
+
+adminRouter.delete(
+  "/promos/:id",
+  asyncHandler(async (req, res) => {
+    await deletePromo(req.params.id as string);
+    res.json({ success: true, data: { deleted: true } });
   }),
 );
 
