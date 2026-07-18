@@ -66,6 +66,16 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
           logger.warn({ err, driverId: user.id }, "driver:location failed");
         });
       });
+
+      socket.on("trip:driver_response", (payload: { tripId: string; accept: boolean }) => {
+        // Dynamic import: dispatch/service.ts imports emitToUser from this
+        // file, so a static top-level import here would create a cycle.
+        import("../modules/dispatch/service.js")
+          .then(({ handleDriverResponse }) => handleDriverResponse(payload?.tripId, user.id, Boolean(payload?.accept)))
+          .catch((err: unknown) => {
+            logger.warn({ err, driverId: user.id }, "trip:driver_response failed");
+          });
+      });
     }
 
     socket.on("disconnect", () => {

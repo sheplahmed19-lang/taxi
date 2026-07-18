@@ -86,12 +86,38 @@ export async function getDriverProfile(userId: string) {
   return profile;
 }
 
-function geoSetKey(vehicleTypeId: string): string {
+// Exported so dispatch/service.ts can search/lock the same Redis GEO sets
+// without duplicating the key convention.
+export function geoSetKey(vehicleTypeId: string): string {
   return `drivers:online:${vehicleTypeId}`;
 }
 
-function stateKey(driverId: string): string {
+export function stateKey(driverId: string): string {
   return `driver:${driverId}:state`;
+}
+
+export interface DriverState {
+  lat: number;
+  lng: number;
+  heading: number;
+  speed: number;
+  ts: number;
+  vehicleTypeId: string;
+}
+
+export async function getDriverState(driverId: string): Promise<DriverState | null> {
+  const state = await redis.hgetall(stateKey(driverId));
+  if (!state.lat || !state.lng) {
+    return null;
+  }
+  return {
+    lat: parseFloat(state.lat),
+    lng: parseFloat(state.lng),
+    heading: parseFloat(state.heading ?? "0"),
+    speed: parseFloat(state.speed ?? "0"),
+    ts: parseInt(state.ts ?? "0", 10),
+    vehicleTypeId: state.vehicleTypeId ?? "",
+  };
 }
 
 async function canGoOnline(driverId: string, verificationStatus: string): Promise<{ allowed: boolean; reason?: string }> {
