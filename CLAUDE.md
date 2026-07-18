@@ -44,4 +44,14 @@ Postgres+PostGIS, Redis, Socket.IO realtime, React admin panels, FCM push.
   dispatch ranking logic, promo validation.
 
 ## Current phase
-Update this line as you progress: **Phase 1 — Core Ride Loop (1.5 trip lifecycle + 1.8 cash payment close-out done, next: 1.6 rider app ride flow / 1.7 driver app ride flow — UI screens, need a real Flutter SDK to build/verify)**
+Update this line as you progress: **Phase 1 — Core Ride Loop (1.5/1.6/1.7/1.8 done — full rider+driver ride flow UI built and verified with a real Flutter SDK (`flutter analyze` + `flutter test`, no Android/iOS/emulator available in this sandbox so on-device UI is unverified). Next: Phase 1 acceptance milestone — needs a real device/emulator with two phones to actually verify end-to-end, then Phase 2 Money Layer.)**
+
+## Flutter SDK
+No Flutter SDK ships with this environment by default. It was cloned into `/tmp/flutter-sdk`
+for this session (`git clone https://github.com/flutter/flutter.git -b stable --depth 1`,
+then add `bin/` to PATH) — that clone does not persist across sessions/containers, so repeat
+it if `flutter`/`dart` aren't found. No Android SDK, no Chrome, and no Linux desktop GTK libs
+are installed, so `flutter analyze` and `flutter test` (widget tests, Dart-VM only) are the
+available verification tools — there is no way to actually run either app on a device/emulator
+here. Both `mobile/rider_app` and `mobile/driver_app` need `.env` copied from `.env.example`
+before `flutter test`/`flutter analyze` will pass asset resolution (gitignored, per-developer).

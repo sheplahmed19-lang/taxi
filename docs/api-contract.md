@@ -6,7 +6,7 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
 /auth        otp/request, otp/verify, refresh, staff/login
 /users       me, me (PATCH), favorites CRUD, notifications list
 /drivers     register, documents, availability, nearby, earnings, statements, owe, subscription
-/vehicles    types (public list), CRUD (admin)
+/vehicles    types (list, any authenticated role), CRUD (admin, not yet implemented)
 /fares       estimate
 /trips       create, :id, :id/accept|arrive|start|complete|cancel, :id/rate, history, :id/track (public token)
 /scheduled   CRUD

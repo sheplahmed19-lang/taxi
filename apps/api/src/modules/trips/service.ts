@@ -150,7 +150,15 @@ export async function getTripForParticipant(tripId: string, userId: string) {
   if (trip.riderId !== userId && trip.driverId !== userId) {
     throw new ForbiddenError("Not a participant on this trip");
   }
-  return trip;
+
+  // pickup/drop are PostGIS geometry columns (Unsupported in the Prisma
+  // schema — see prisma/schema.prisma), so they're never part of the
+  // default select above and have to be fetched separately. The driver
+  // app's navigate-to-pickup screen needs real coordinates, not just the
+  // free-text address.
+  const [pickup, drop] = await Promise.all([getTripPickupPoint(tripId), getTripDropPoint(tripId)]);
+
+  return { ...trip, pickup, drop };
 }
 
 // ── Live location relay + batched trip_locations persistence ──────────────

@@ -17,7 +17,7 @@ Rooms: `user:{id}`, `trip:{id}`, `admin:live`
 
 | Event | Payload | Recipient | Notes |
 |---|---|---|---|
-| `trip:request` | `{trip, fareEstimate, pickupDistance, expiresAt}` | driver | |
+| `trip:request` | `{trip: {id,pickup:{lat,lng},pickupAddress,dropAddress,distanceM,durationS,paymentMethod}, fareEstimate, pickupDistance, expiresAt}` | driver | |
 | `trip:request_expired` | `{tripId}` | driver | |
 | `trip:accepted` | `{trip, driver, vehicle, eta}` | rider | |
 | `trip:driver_location` | `{lat,lng,heading,eta}` | trip room | |

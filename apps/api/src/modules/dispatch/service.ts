@@ -89,13 +89,19 @@ async function findAndLockNextCandidate(
   return null;
 }
 
-async function offerToDriver(trip: Trip, candidate: RankedCandidate, timeoutS: number): Promise<void> {
+async function offerToDriver(
+  trip: Trip,
+  candidate: RankedCandidate,
+  timeoutS: number,
+  pickup: { lat: number; lng: number },
+): Promise<void> {
   await redis.sadd(offeredSetKey(trip.id), candidate.driverId);
   await redis.set(currentDriverKey(trip.id), candidate.driverId, "EX", timeoutS + 30);
 
   emitToUser(candidate.driverId, "trip:request", {
     trip: {
       id: trip.id,
+      pickup,
       pickupAddress: trip.pickupAddress,
       dropAddress: trip.dropAddress,
       distanceM: trip.distanceM,
@@ -169,7 +175,7 @@ export async function attemptDispatch(tripId: string): Promise<void> {
     return;
   }
 
-  await offerToDriver(trip, candidate, timeoutS);
+  await offerToDriver(trip, candidate, timeoutS, pickup);
 }
 
 /** Creates the trip and kicks off the first dispatch attempt. */
