@@ -2,7 +2,7 @@
 // Other modules must only import from this file, never from routes.ts or internals.
 import { prisma } from "../../db/index.js";
 import { redis } from "../../shared/redis.js";
-import { uploadObject } from "../../shared/storage.js";
+import { uploadObject, getSignedObjectUrl } from "../../shared/storage.js";
 import { getConfigValue } from "../../shared/config.js";
 import { ForbiddenError, NotFoundError } from "../../shared/errors.js";
 
@@ -270,4 +270,19 @@ export async function findNearbyDrivers(
   }
 
   return results;
+}
+
+/** Weekly statements (Phase 2.5) — signed download link per statement, same pattern as document/avatar URLs. */
+export async function listMyStatements(driverId: string) {
+  const statements = await prisma.driverStatement.findMany({
+    where: { driverId },
+    orderBy: { periodEnd: "desc" },
+  });
+
+  return Promise.all(
+    statements.map(async (statement) => ({
+      ...statement,
+      downloadUrl: await getSignedObjectUrl(statement.objectKey),
+    })),
+  );
 }

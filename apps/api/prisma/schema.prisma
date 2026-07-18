@@ -202,6 +202,7 @@ model DriverProfile {
   payouts       Payout[]
   oweAmount     OweAmount?
   subscriptions Subscription[]
+  statements    DriverStatement[]
 
   @@map("driver_profiles")
 }
@@ -393,17 +394,50 @@ model Payment {
 }
 
 model Payout {
-  id          String       @id @default(uuid())
-  driverId    String       @map("driver_id")
-  driver      DriverProfile @relation(fields: [driverId], references: [userId])
-  amount      Int
-  status      PayoutStatus @default(requested)
-  method      String?
-  processedBy String?      @map("processed_by")
-  createdAt   DateTime     @default(now()) @map("created_at")
-  updatedAt   DateTime     @updatedAt @map("updated_at")
+  id              String       @id @default(uuid())
+  driverId        String       @map("driver_id")
+  driver          DriverProfile @relation(fields: [driverId], references: [userId])
+  amount          Int
+  status          PayoutStatus @default(requested)
+  method          String?
+  rejectionReason String?      @map("rejection_reason")
+  processedBy     String?      @map("processed_by")
+  createdAt       DateTime     @default(now()) @map("created_at")
+  updatedAt       DateTime     @updatedAt @map("updated_at")
 
   @@map("payouts")
+  @@index([driverId])
+}
+
+// Manual admin actions on money-adjacent state (owe adjustments, payout
+// decisions) — actorId/targetId are bare ids, not Prisma relations, matching
+// Payout.processedBy's existing precedent of not FK-constraining "who did this".
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String   @map("actor_id")
+  action     String
+  targetType String   @map("target_type")
+  targetId   String   @map("target_id")
+  meta       Json?
+  createdAt  DateTime @default(now()) @map("created_at")
+
+  @@map("audit_logs")
+  @@index([targetType, targetId])
+}
+
+model DriverStatement {
+  id              String        @id @default(uuid())
+  driverId        String        @map("driver_id")
+  driver          DriverProfile @relation(fields: [driverId], references: [userId])
+  periodStart     DateTime      @map("period_start")
+  periodEnd       DateTime      @map("period_end")
+  objectKey       String        @map("object_key")
+  tripCount       Int           @map("trip_count")
+  totalEarnings   Int           @map("total_earnings")
+  totalCommission Int           @map("total_commission")
+  createdAt       DateTime      @default(now()) @map("created_at")
+
+  @@map("driver_statements")
   @@index([driverId])
 }
 

@@ -3,6 +3,7 @@ import { asyncHandler } from "../../shared/asyncHandler.js";
 import { requireAuth, requireRole } from "../../middleware/auth.js";
 import { upload } from "../../middleware/upload.js";
 import { ValidationError } from "../../shared/errors.js";
+import { getOwe, payOweFromWallet } from "../wallet/service.js";
 import {
   nearbyDriversQuerySchema,
   registerDriverSchema,
@@ -12,6 +13,7 @@ import {
 import {
   findNearbyDrivers,
   getDriverProfile,
+  listMyStatements,
   registerDriver,
   setAvailability,
   uploadDriverDocument,
@@ -69,5 +71,29 @@ driversRouter.post(
     const { online } = setAvailabilitySchema.parse(req.body);
     const profile = await setAvailability(req.user!.id, online);
     res.json({ success: true, data: profile });
+  }),
+);
+
+driversRouter.get(
+  "/owe",
+  asyncHandler(async (req, res) => {
+    const owe = await getOwe(req.user!.id);
+    res.json({ success: true, data: owe });
+  }),
+);
+
+driversRouter.post(
+  "/owe/pay",
+  asyncHandler(async (req, res) => {
+    await payOweFromWallet(req.user!.id);
+    res.json({ success: true, data: { paid: true } });
+  }),
+);
+
+driversRouter.get(
+  "/statements",
+  asyncHandler(async (req, res) => {
+    const statements = await listMyStatements(req.user!.id);
+    res.json({ success: true, data: { statements } });
   }),
 );

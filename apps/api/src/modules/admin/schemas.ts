@@ -7,3 +7,8 @@ export const listDriversQuerySchema = z.object({
 export const rejectDriverSchema = z.object({
   reason: z.string().min(1).max(500),
 });
+
+export const adjustOweSchema = z.object({
+  delta: z.number().int(),
+  reason: z.string().min(1).max(500),
+});

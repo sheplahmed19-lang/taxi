@@ -1,8 +1,11 @@
 // wallet module service — business logic lives here.
 // Other modules must only import from this file, never from routes.ts or internals.
+import { randomUUID } from "node:crypto";
 import { prisma } from "../../db/index.js";
+import { redis } from "../../shared/redis.js";
 import { getConfigValue } from "../../shared/config.js";
 import { ConflictError, NotFoundError } from "../../shared/errors.js";
+import { logAudit } from "../../shared/auditLog.js";
 import { postEntry } from "./ledger.js";
 
 const TRANSACTIONS_PAGE_SIZE = 20;
@@ -198,4 +201,79 @@ export async function settleWalletTripPayment(
 
   await postElectronicTripEarnings(tripId, driverId, vehicleTypeId, fareTotal);
   return { paid: true };
+}
+
+// ── Owe management (Phase 2.5) ─────────────────────────────────────────────
+
+export async function getOwe(driverId: string): Promise<{ amount: number }> {
+  const owe = await prisma.oweAmount.findUnique({ where: { driverId } });
+  return { amount: owe?.amount ?? 0 };
+}
+
+function oweLockKey(driverId: string): string {
+  return `owe:pay-lock:${driverId}`;
+}
+
+/**
+ * "Pay owe from wallet" (Phase 2.5): settles the full outstanding amount in
+ * one shot — no partial payoffs in this v1. Same short Redis SET-NX lock
+ * pattern as subscriptions/service.ts:purchaseWithWallet, guarding against a
+ * double-tap double-debiting while the first payoff is still in flight;
+ * postEntry's own negative-balance rejection handles "not enough money".
+ */
+export async function payOweFromWallet(driverId: string): Promise<void> {
+  const locked = await redis.set(oweLockKey(driverId), "1", "EX", 10, "NX");
+  if (locked !== "OK") {
+    throw new ConflictError("An owe payment is already in progress");
+  }
+
+  try {
+    const owe = await prisma.oweAmount.findUnique({ where: { driverId } });
+    if (!owe || owe.amount <= 0) {
+      throw new ConflictError("Nothing owed");
+    }
+
+    const wallet = await getWalletForUser(driverId);
+    await postEntry({
+      walletId: wallet.id,
+      type: "owe",
+      debit: owe.amount,
+      credit: 0,
+      idempotencyKey: `owe:${driverId}:${randomUUID()}`,
+    });
+
+    await prisma.oweAmount.update({ where: { driverId }, data: { amount: 0 } });
+  } finally {
+    await redis.del(oweLockKey(driverId));
+  }
+}
+
+/** Admin report: every driver currently carrying an outstanding owe balance. */
+export async function listOweReport() {
+  return prisma.oweAmount.findMany({
+    where: { amount: { gt: 0 } },
+    orderBy: { amount: "desc" },
+    include: { driver: { include: { user: { select: { id: true, name: true, phone: true } } } } },
+  });
+}
+
+/**
+ * Manual adjustment (Phase 2.5) — `delta` can be negative (forgive/reduce)
+ * or positive (add a manual charge). Unlike trip-driven owe changes, this
+ * never touches the wallet ledger — owe_amounts is its own liability
+ * tracker — so it's just an upsert plus an audit trail of who changed it
+ * and why.
+ */
+export async function adjustOwe(driverId: string, delta: number, reason: string, actorId: string): Promise<void> {
+  const updated = await prisma.oweAmount.upsert({
+    where: { driverId },
+    update: { amount: { increment: delta } },
+    create: { driverId, amount: Math.max(delta, 0) },
+  });
+
+  if (updated.amount < 0) {
+    await prisma.oweAmount.update({ where: { driverId }, data: { amount: 0 } });
+  }
+
+  await logAudit(actorId, "owe.adjust", "owe_amount", driverId, { delta, reason });
 }
