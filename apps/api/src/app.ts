@@ -5,6 +5,18 @@ import { pinoHttp } from "pino-http";
 import { logger } from "./shared/logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
 
+declare global {
+  namespace Express {
+    interface Request {
+      // Captured alongside JSON parsing (see express.json below) so
+      // payments/service.ts can verify the Stripe webhook signature against
+      // the exact bytes Stripe signed — the parsed/re-stringified body
+      // would not byte-for-byte match and would fail verification.
+      rawBody?: Buffer;
+    }
+  }
+}
+
 import { authRouter } from "./modules/auth/index.js";
 import { usersRouter } from "./modules/users/index.js";
 import { driversRouter } from "./modules/drivers/index.js";
@@ -30,7 +42,7 @@ export function createApp(): express.Express {
 
   app.use(helmet());
   app.use(cors());
-  app.use(express.json());
+  app.use(express.json({ verify: (req, _res, buf) => { (req as express.Request).rawBody = buf; } }));
   app.use(pinoHttp({ logger }));
 
   app.get("/health", (_req, res) => {

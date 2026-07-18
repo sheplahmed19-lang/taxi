@@ -11,7 +11,7 @@ import { redis } from "../../shared/redis.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
 import { calculateFinalFare, estimateFares } from "../fares/service.js";
 import { geoSetKey, getDriverState } from "../drivers/service.js";
-import { postCashTripEarnings } from "../wallet/service.js";
+import { postCashTripEarnings, postElectronicTripEarnings } from "../wallet/service.js";
 import { nextStatus, type TripEvent, type TripStatus } from "./state-machine.js";
 
 const ACTIVE_TRIP_EXCLUDED_STATUSES: TripStatus[] = [
@@ -372,6 +372,33 @@ export async function completeTrip(tripId: string, driverId: string) {
   });
 
   return finalTrip;
+}
+
+/**
+ * Card/wallet settlement (Phase 2.2+): called once the payment gateway
+ * confirms the charge succeeded (payments/service.ts's webhook handler) or
+ * a wallet debit clears. Mirrors the cash path in completeTrip() but posts
+ * via postElectronicTripEarnings (no owe_amounts liability — the platform
+ * already holds the money) and is itself idempotent: a trip already at
+ * "paid" is left alone rather than re-posting or throwing on the now-invalid
+ * "payment_settled" transition, since gateway webhooks can be retried.
+ */
+export async function markTripPaid(tripId: string, amountPaid: number): Promise<void> {
+  const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+  if (!trip) {
+    throw new NotFoundError("Trip not found");
+  }
+  if (trip.status === "paid") {
+    return;
+  }
+  if (!trip.driverId) {
+    throw new ConflictError("Trip has no assigned driver to settle payment to");
+  }
+
+  await postElectronicTripEarnings(tripId, trip.driverId, amountPaid);
+  const updated = await transitionTrip(tripId, "payment_settled", { paymentStatus: "paid" });
+
+  emitToTrip(tripId, "trip:status", { tripId, status: updated.status });
 }
 
 /**

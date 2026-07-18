@@ -10,8 +10,9 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
 /fares       estimate
 /trips       create, :id, :id/accept|arrive|start|complete|cancel, :id/rate, history, :id/track (public token)
 /scheduled   CRUD
-/wallet      balance, transactions (cursor pagination); topup/init lands in Phase 2.2 with the Stripe gateway
-/payments    methods, webhook/:gateway
+/wallet      balance, transactions (cursor pagination), topup/init (Stripe)
+/payments    ride/:tripId/init (Stripe card charge for a completed card-pay trip),
+             webhook/:gateway (signature-verified, idempotent); methods CRUD not yet implemented
 /payouts     request, admin approve/reject/paid
 /promos      validate, apply; admin CRUD
 /referrals   my-code, stats

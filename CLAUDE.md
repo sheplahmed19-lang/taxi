@@ -44,7 +44,7 @@ Postgres+PostGIS, Redis, Socket.IO realtime, React admin panels, FCM push.
   dispatch ranking logic, promo validation.
 
 ## Current phase
-Update this line as you progress: **Phase 1 done (1.1–1.8; the acceptance milestone itself needs a real device/emulator with two phones, unavailable in this sandbox). Phase 2 — Money Layer: 2.1 wallet+ledger hardening done (GET /wallet/balance, GET /wallet/transactions cursor-paginated; postEntry() row-locking/idempotency/negative-balance rejection were already hardened in 1.8). Next: 2.2 payment gateway abstraction + Stripe.**
+Update this line as you progress: **Phase 1 done (1.1–1.8; the acceptance milestone itself needs a real device/emulator with two phones, unavailable in this sandbox). Phase 2 — Money Layer: 2.1 wallet+ledger hardening done. 2.2 payment gateway abstraction + Stripe done (StripeGateway implements payments/gateway.interface.ts; POST /wallet/topup/init and POST /payments/ride/:tripId/init create PaymentIntents; POST /payments/webhook/stripe verifies signature + idempotently posts ledger entries / calls trips/service.ts:markTripPaid — no real STRIPE_SECRET_KEY in this sandbox, so live Stripe charge-creation is unverified, same disclosed gap as GOOGLE_MAPS_API_KEY; tests use a FakeGateway injected via payments/service.ts:__setGatewayForTesting). Next: 2.3 second gateway (Paystack) + wallet ride-payment method.**
 
 ## Flutter SDK
 No Flutter SDK ships with this environment by default. It was cloned into `/tmp/flutter-sdk`

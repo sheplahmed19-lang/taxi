@@ -32,14 +32,15 @@ export async function listTransactions(userId: string, cursor?: string) {
 }
 
 /**
- * Cash trip close-out (Phase 1.8): the rider paid the driver in cash
- * directly, so the platform never held that money — only the commission
- * the driver owes is tracked. Posts an earning credit + commission debit
- * on the driver's wallet (both idempotent per trip) and increments
- * owe_amounts by the commission, which drivers/service.ts:setAvailability
- * already checks against owe_block_threshold before letting them go online.
+ * Shared by both close-out paths below: credits the driver's wallet with
+ * the full fare, then debits the platform's commission — both idempotent
+ * per trip (a replay of either posts nothing new).
  */
-export async function postCashTripEarnings(tripId: string, driverId: string, fareTotal: number): Promise<void> {
+async function postTripCommissionSplit(
+  tripId: string,
+  driverId: string,
+  fareTotal: number,
+): Promise<{ commissionAmount: number; commissionCreated: boolean }> {
   const wallet = await prisma.wallet.findUnique({ where: { userId: driverId } });
   if (!wallet) {
     throw new NotFoundError("Driver wallet not found");
@@ -68,15 +69,41 @@ export async function postCashTripEarnings(tripId: string, driverId: string, far
     idempotencyKey: `trip:${tripId}:commission`,
   });
 
+  return { commissionAmount, commissionCreated: commission.created };
+}
+
+/**
+ * Cash trip close-out (Phase 1.8): the rider paid the driver in cash
+ * directly, so the platform never held that money — only the commission
+ * the driver owes is tracked. Posts the earning/commission split, then
+ * increments owe_amounts by the commission (the driver already has the
+ * cash in hand, so this is a real liability, unlike the electronic path
+ * below), which drivers/service.ts:setAvailability already checks against
+ * owe_block_threshold before letting them go online.
+ */
+export async function postCashTripEarnings(tripId: string, driverId: string, fareTotal: number): Promise<void> {
+  const { commissionAmount, commissionCreated } = await postTripCommissionSplit(tripId, driverId, fareTotal);
+
   // oweAmount.upsert's increment isn't itself idempotent, so only apply it
   // the first time this trip's commission entry is actually posted — a
   // replay (e.g. a retried close-out call) must not double-count the owed
   // amount even though the ledger entries above are correctly deduplicated.
-  if (commission.created) {
+  if (commissionCreated) {
     await prisma.oweAmount.upsert({
       where: { driverId },
       update: { amount: { increment: commissionAmount } },
       create: { driverId, amount: commissionAmount },
     });
   }
+}
+
+/**
+ * Card/wallet trip close-out (Phase 2.2+): the platform actually captured
+ * the fare via the payment gateway, so the commission is simply retained
+ * out of money already held — nothing is owed back by the driver, unlike
+ * the cash path. Posts the same earning/commission split without touching
+ * owe_amounts.
+ */
+export async function postElectronicTripEarnings(tripId: string, driverId: string, fareTotal: number): Promise<void> {
+  await postTripCommissionSplit(tripId, driverId, fareTotal);
 }

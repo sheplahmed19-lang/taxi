@@ -1,7 +1,8 @@
 import { Router } from "express";
 import { asyncHandler } from "../../shared/asyncHandler.js";
 import { requireAuth } from "../../middleware/auth.js";
-import { listTransactionsQuerySchema } from "./schemas.js";
+import { initWalletTopup } from "../payments/service.js";
+import { listTransactionsQuerySchema, topupInitSchema } from "./schemas.js";
 import { getBalance, listTransactions } from "./service.js";
 
 export const walletRouter = Router();
@@ -25,4 +26,11 @@ walletRouter.get(
   }),
 );
 
-// TODO: topup/init lands in Phase 2.2 once payments/gateway.interface.ts and a real gateway exist.
+walletRouter.post(
+  "/topup/init",
+  asyncHandler(async (req, res) => {
+    const { amount, currency } = topupInitSchema.parse(req.body);
+    const result = await initWalletTopup(req.user!.id, amount, currency);
+    res.status(201).json({ success: true, data: result });
+  }),
+);
