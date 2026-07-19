@@ -4,26 +4,43 @@ import bcrypt from "bcryptjs";
 import { prisma } from "../../db/index.js";
 import type { AuthUser } from "../../middleware/auth.js";
 import type { User } from "@prisma/client";
+import { attachReferral, generateReferralCode } from "../referrals/service.js";
 
 const BCRYPT_ROUNDS = 12;
 
-/** Finds a rider/driver by phone, or creates one (with a wallet) on first login. */
+/**
+ * Finds a rider/driver by phone, or creates one (with a wallet and a fresh
+ * referral code) on first login. `referralCode`, if given, is only applied
+ * on this creation path — see referrals/service.ts:attachReferral.
+ */
 export async function findOrCreateUserByPhone(
   phone: string,
   role: "rider" | "driver",
+  referralCode?: string,
 ): Promise<User> {
   const existing = await prisma.user.findUnique({ where: { phone } });
   if (existing) {
     return existing;
   }
 
-  return prisma.user.create({
+  const ownReferralCode = await generateReferralCode();
+  const user = await prisma.user.create({
     data: {
       phone,
       role,
+      referralCode: ownReferralCode,
       wallet: { create: { balance: 0 } },
     },
   });
+
+  if (referralCode) {
+    const linked = await attachReferral(user.id, role, referralCode);
+    if (linked) {
+      return prisma.user.findUniqueOrThrow({ where: { id: user.id } });
+    }
+  }
+
+  return user;
 }
 
 /** Verifies staff/admin email+password credentials. Returns null on any mismatch. */

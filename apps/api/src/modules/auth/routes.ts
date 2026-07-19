@@ -20,14 +20,14 @@ authRouter.post(
 authRouter.post(
   "/otp/verify",
   asyncHandler(async (req, res) => {
-    const { phone, otp, role } = otpVerifySchema.parse(req.body);
+    const { phone, otp, role, referralCode } = otpVerifySchema.parse(req.body);
 
     const valid = await verifyOtp(phone, otp);
     if (!valid) {
       throw new ValidationError("Invalid or expired OTP");
     }
 
-    const user = await findOrCreateUserByPhone(phone, role);
+    const user = await findOrCreateUserByPhone(phone, role, referralCode);
     const accessToken = signAccessToken(toAuthUser(user));
     const refreshToken = await issueRefreshToken(user.id);
 

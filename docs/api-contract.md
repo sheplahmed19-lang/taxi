@@ -3,7 +3,8 @@
 Base path: `/api/v1`. Responses: `{ success, data | error }`.
 
 ```
-/auth        otp/request, otp/verify, refresh, staff/login
+/auth        otp/request, otp/verify (body may include referralCode — only applied on the
+             new-account path, silently ignored on a returning login), refresh, staff/login
 /users       me, me (PATCH), favorites CRUD, notifications list
 /drivers     register, documents, availability, nearby, earnings (not yet implemented),
              statements (list, signed download URL per statement), owe (GET), owe/pay (POST,
@@ -29,7 +30,7 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
 /promos      validate (body: {code, pickup, drop, vehicleTypeId} — no side effects, safe to
              call on every keystroke), apply (body: {tripId, code} — attaches a code to an
              already-created trip before it starts); admin CRUD under /admin/promos
-/referrals   my-code, stats
+/referrals   my-code (own referral code), stats (totalReferred, pending, credited)
 /chat        :tripId/messages
 /admin       dashboard, drivers, users, staff, roles, zones, config,
              trips, manual-booking, broadcasts, reports/*, heatmap,
@@ -50,6 +51,20 @@ completion, `trips/service.ts:completeTrip` re-applies the *same* promo's raw di
 against the newly-measured final fare without re-checking eligibility (`fares/engine.ts`'s
 `applyPromoDiscount`) — a promo attached mid-trip stays honored through completion even if
 its window elapses or another rider exhausts its usage limit while this trip is in progress.
+
+Referrals: every user gets a unique 8-character referral code at account creation
+(`referrals/service.ts:generateReferralCode`). A code passed to `POST /auth/otp/verify`
+during signup links the new user to their referrer (`User.referredBy` + a `Referral` row,
+`bonusStatus: pending`) — invalid or self-referral codes are silently ignored rather than
+blocking signup. The moment either trip participant (rider or driver) settles a trip to
+"paid" — `trips/service.ts`'s `completeTrip`/`markTripPaid` — a BullMQ job
+(`jobs/referralBonus.ts`) checks whether that specific user has a pending referral and, if
+so, credits both referrer and referee (amounts from `system_config`'s `referral_bonus_rider`/
+`referral_bonus_driver`, keyed by the referee's role) via the wallet ledger and flips the
+referral to `credited`; both wallets are credited before the status flip so a crash mid-job
+can never leave a referral marked paid without the money having moved, and postEntry's
+idempotency key makes a retried/duplicate job a no-op rather than a double-credit. Rider/
+driver app referral share sheet and dashboard UI are deferred (backend-only pass).
 
 Weekly driver statements: a Monday-00:00 BullMQ cron
 (`jobs/weeklyStatements.ts:scheduleWeeklyStatementsCron`) generates a CSV per

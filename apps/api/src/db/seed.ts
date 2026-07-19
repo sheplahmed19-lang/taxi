@@ -72,6 +72,8 @@ async function main(): Promise<void> {
     { key: "commission_pct", value: 20 },
     { key: "cancellation_fee", value: 500 },
     { key: "owe_block_threshold", value: 10000 },
+    { key: "referral_bonus_rider", value: 500 },
+    { key: "referral_bonus_driver", value: 1000 },
   ];
 
   for (const cfg of systemConfig) {

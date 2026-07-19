@@ -20,6 +20,7 @@ import {
   releasePromoRedemption,
   resolveAndValidatePromo,
 } from "../promos/service.js";
+import { enqueueReferralBonusCheck } from "../../jobs/referralBonus.js";
 import { nextStatus, type TripEvent, type TripStatus } from "./state-machine.js";
 
 const ACTIVE_TRIP_EXCLUDED_STATUSES: TripStatus[] = [
@@ -475,6 +476,13 @@ export async function completeTrip(tripId: string, driverId: string) {
     }
   }
 
+  if (finalTrip.status === "paid") {
+    await enqueueReferralBonusCheck(trip.riderId, tripId);
+    if (driverId) {
+      await enqueueReferralBonusCheck(driverId, tripId);
+    }
+  }
+
   emitToTrip(tripId, "trip:status", {
     tripId,
     status: finalTrip.status,
@@ -507,6 +515,9 @@ export async function markTripPaid(tripId: string, amountPaid: number): Promise<
 
   await postElectronicTripEarnings(tripId, trip.driverId, trip.vehicleTypeId, amountPaid);
   const updated = await transitionTrip(tripId, "payment_settled", { paymentStatus: "paid" });
+
+  await enqueueReferralBonusCheck(trip.riderId, tripId);
+  await enqueueReferralBonusCheck(trip.driverId, tripId);
 
   emitToTrip(tripId, "trip:status", { tripId, status: updated.status });
 }

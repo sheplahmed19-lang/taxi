@@ -12,6 +12,7 @@ export const otpVerifySchema = z.object({
   phone: phoneSchema,
   otp: z.string().min(4).max(8),
   role: z.enum(["rider", "driver"]).default("rider"),
+  referralCode: z.string().min(1).max(20).optional(),
 });
 
 export const refreshSchema = z.object({
