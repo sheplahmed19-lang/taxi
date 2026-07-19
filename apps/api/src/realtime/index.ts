@@ -53,6 +53,17 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
     void redis.set(socketKey(socket.id), user.id);
     logger.debug({ socketId: socket.id, userId: user.id }, "socket connected on /app");
 
+    // Both roles can chat — unlike the driver-only handlers below.
+    socket.on("chat:send", (payload: { tripId: string; body: string }) => {
+      // Dynamic import: chat/service.ts imports emitToTrip from this file,
+      // so a static top-level import here would create a cycle.
+      import("../modules/chat/service.js")
+        .then(({ sendChatMessage }) => sendChatMessage(payload?.tripId, user.id, payload?.body))
+        .catch((err: unknown) => {
+          logger.warn({ err, userId: user.id }, "chat:send failed");
+        });
+    });
+
     if (user.role === "driver") {
       socket.on("driver:availability", (payload: { online: boolean }) => {
         setAvailability(user.id, Boolean(payload?.online)).catch((err: unknown) => {

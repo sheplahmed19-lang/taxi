@@ -30,7 +30,7 @@ Rooms: `user:{id}`, `trip:{id}`, `admin:live`
 | `trip:status` | `{tripId, status, payload}` | trip room | arrived/started/completed/cancelled |
 | `trip:fare_updated` | `{tripId, fareBreakdown, fareTotal}` | trip room | a promo code was applied via `POST /promos/apply` after trip creation |
 | `trip:no_drivers` | `{tripId}` | rider | |
-| `chat:message` | `{tripId, message}` | trip room | |
+| `chat:message` | `{tripId, message}` | trip room | `message` is the full ChatMessage row incl. `sender: {id,name,role}` |
 | `notification` | `{title, body, data}` | user room | |
 | `admin:driver_positions` | `{[...]}` | admin:live | |
 | `admin:trip_update` | `{...}` | admin:live | |

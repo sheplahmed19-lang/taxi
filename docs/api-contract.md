@@ -37,7 +37,9 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              call on every keystroke), apply (body: {tripId, code} — attaches a code to an
              already-created trip before it starts); admin CRUD under /admin/promos
 /referrals   my-code (own referral code), stats (totalReferred, pending, credited)
-/chat        :tripId/messages
+/chat        :tripId/messages (GET list, POST send — REST fallback; chat:send/chat:message
+             over the /app socket is the primary path), :tripId/read (POST, marks the other
+             participant's messages read)
 /admin       dashboard, drivers, users, staff, roles, zones, config,
              trips, manual-booking, broadcasts, reports/*, heatmap,
              subscriptions/plans (POST), subscriptions/plans/:id (PATCH),
@@ -105,6 +107,18 @@ joins the same `trip:{id}` room the authenticated `/app` namespace uses, and
 gets the same `trip:status`/`trip:driver_location` events a participant sees, live, for as
 long as their token is valid. The minimal public React tracking page itself is deferred,
 same backend-then-app cadence as the rest of Phase 3.
+
+In-trip chat: `chat:send` (client→server, `/app` socket) persists a `ChatMessage` row,
+relays it live to the trip room as `chat:message`, and separately notifies the *other*
+participant through the normal notifications pipeline (`notifications/service.ts:sendToUser`
+— DB row + socket + best-effort FCM), which is what actually reaches them if the app is
+backgrounded. `POST /chat/:tripId/messages` is a REST fallback for the same send path
+(useful for clients without a live socket, or for tests); `GET /chat/:tripId/messages` lists
+the full thread chronologically; `POST /chat/:tripId/read` marks the counterparty's messages
+read, backing an unread-badge count. Call buttons are a plain `tel:` link in the (deferred)
+app UI — no backend surface needed for v1; a Twilio masked-proxy call is noted in the plan
+as a v2 upgrade, not built here. Chat UI and unread badges in both apps are deferred, same
+backend-then-app cadence as the rest of Phase 3.
 
 Weekly driver statements: a Monday-00:00 BullMQ cron
 (`jobs/weeklyStatements.ts:scheduleWeeklyStatementsCron`) generates a CSV per
