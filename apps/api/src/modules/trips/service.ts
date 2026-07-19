@@ -21,6 +21,7 @@ import {
   resolveAndValidatePromo,
 } from "../promos/service.js";
 import { enqueueReferralBonusCheck } from "../../jobs/referralBonus.js";
+import { createTripShareToken, resolveTripShareToken } from "../../shared/shareTokens.js";
 import { nextStatus, type TripEvent, type TripStatus } from "./state-machine.js";
 
 const ACTIVE_TRIP_EXCLUDED_STATUSES: TripStatus[] = [
@@ -615,4 +616,75 @@ export async function rateTrip(tripId: string, raterId: string, stars: number, r
   }
 
   return rating;
+}
+
+// ── Share tracking (Phase 3.4) ─────────────────────────────────────────────
+
+export interface ShareLink {
+  token: string;
+  expiresAt: Date;
+}
+
+/** Either participant can mint a share link — a tokenized URL a logged-out browser can use to watch the ride live. */
+export async function createShareLink(tripId: string, userId: string): Promise<ShareLink> {
+  const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+  if (!trip) {
+    throw new NotFoundError("Trip not found");
+  }
+  if (trip.riderId !== userId && trip.driverId !== userId) {
+    throw new ForbiddenError("Not a participant on this trip");
+  }
+
+  const ttlHours = await getConfigValue("share_link_ttl_hours", 24);
+  const token = await createTripShareToken(tripId, ttlHours);
+  return { token, expiresAt: new Date(Date.now() + ttlHours * 3600_000) };
+}
+
+export interface PublicTripView {
+  status: TripStatus;
+  pickup: { lat: number; lng: number } | null;
+  pickupAddress: string | null;
+  drop: { lat: number; lng: number } | null;
+  dropAddress: string | null;
+  driverName: string | null;
+  vehicle: { plate: string; model: string | null; color: string | null } | null;
+  vehicleTypeName: string;
+}
+
+/**
+ * Read-only, token-scoped trip view for the public share page — no OTP,
+ * payment details, or phone numbers. GET /trips/:id/track?token=... is
+ * mounted outside requireAuth (trips/routes.ts), so this is the only line
+ * of defense: the token must resolve to this exact tripId.
+ */
+export async function getTripForPublicTracking(tripId: string, token: string): Promise<PublicTripView> {
+  const resolvedTripId = await resolveTripShareToken(token);
+  if (!resolvedTripId || resolvedTripId !== tripId) {
+    throw new NotFoundError("Invalid or expired tracking link");
+  }
+
+  const trip = await prisma.trip.findUnique({
+    where: { id: tripId },
+    include: {
+      driver: { select: { name: true } },
+      vehicle: { select: { plate: true, model: true, color: true } },
+      vehicleType: { select: { name: true } },
+    },
+  });
+  if (!trip) {
+    throw new NotFoundError("Trip not found");
+  }
+
+  const [pickup, drop] = await Promise.all([getTripPickupPoint(tripId), getTripDropPoint(tripId)]);
+
+  return {
+    status: trip.status,
+    pickup,
+    pickupAddress: trip.pickupAddress,
+    drop,
+    dropAddress: trip.dropAddress,
+    driverName: trip.driver?.name ?? null,
+    vehicle: trip.vehicle ? { plate: trip.vehicle.plate, model: trip.vehicle.model, color: trip.vehicle.color } : null,
+    vehicleTypeName: trip.vehicleType.name,
+  };
 }

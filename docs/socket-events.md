@@ -1,8 +1,14 @@
 # Socket.IO Event Contract
 
-Namespaces: `/app` (riders+drivers, JWT), `/admin` (staff), `/public` (share tokens)
+Namespaces: `/app` (riders+drivers, JWT), `/admin` (staff), `/public` (share tokens —
+handshake `auth: {tripId, token}`, `token` from `POST /trips/:id/share`; auto-joins `trip:{id}`
+on connect, read-only, no client→server events)
 
 Rooms: `user:{id}`, `trip:{id}`, `admin:live`
+
+`trip:{id}` is shared across `/app` and `/public` — `emitToTrip` broadcasts to both, so a
+`/public` tracker with a valid token receives the same `trip:driver_location`/`trip:status`/
+`trip:fare_updated` events listed below as a logged-in participant would.
 
 ## Client → Server
 

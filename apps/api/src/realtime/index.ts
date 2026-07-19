@@ -6,6 +6,7 @@ import { verifyAccessToken } from "../modules/auth/tokens.js";
 import type { AuthUser } from "../middleware/auth.js";
 import { recordLocation, setAvailability, type DriverLocationInput } from "../modules/drivers/service.js";
 import { scheduleOfflineGraceCheck } from "../jobs/driverOfflineGrace.js";
+import { resolveTripShareToken } from "../shared/shareTokens.js";
 
 /**
  * Socket.IO server bootstrap. Namespaces/rooms/events per docs/socket-events.md
@@ -117,7 +118,32 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
   });
 
   // Token-scoped read-only trip tracking for logged-out browsers — Phase 3.4.
-  io.of("/public");
+  // No JWT: the handshake carries {tripId, token}, and the token must
+  // resolve (via shared/shareTokens.ts) to that exact tripId to connect.
+  const publicNamespace = io.of("/public");
+  publicNamespace.use((socket, next) => {
+    const tripId = socket.handshake.auth?.tripId as string | undefined;
+    const token = socket.handshake.auth?.token as string | undefined;
+    if (!tripId || !token) {
+      next(new Error("Missing tripId or token"));
+      return;
+    }
+    resolveTripShareToken(token)
+      .then((resolvedTripId) => {
+        if (resolvedTripId !== tripId) {
+          next(new Error("Invalid or expired tracking link"));
+          return;
+        }
+        socket.data.tripId = tripId;
+        next();
+      })
+      .catch(() => next(new Error("Invalid or expired tracking link")));
+  });
+  publicNamespace.on("connection", (socket) => {
+    const tripId = socket.data.tripId as string;
+    void socket.join(`trip:${tripId}`);
+    logger.debug({ socketId: socket.id, tripId }, "socket connected on /public");
+  });
 
   return io;
 }
@@ -126,8 +152,10 @@ export function emitToUser(userId: string, event: string, payload: unknown): voi
   io?.of("/app").to(`user:${userId}`).emit(event, payload);
 }
 
+/** Emits to both the authenticated /app trip room and any token-scoped public trackers (Phase 3.4). */
 export function emitToTrip(tripId: string, event: string, payload: unknown): void {
   io?.of("/app").to(`trip:${tripId}`).emit(event, payload);
+  io?.of("/public").to(`trip:${tripId}`).emit(event, payload);
 }
 
 export function emitToAdmins(event: string, payload: unknown): void {

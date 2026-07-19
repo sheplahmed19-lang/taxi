@@ -76,6 +76,7 @@ async function main(): Promise<void> {
     { key: "referral_bonus_driver", value: 1000 },
     { key: "scheduled_reminder_minutes", value: 60 },
     { key: "scheduled_dispatch_lead_minutes", value: 15 },
+    { key: "share_link_ttl_hours", value: 24 },
   ];
 
   for (const cfg of systemConfig) {

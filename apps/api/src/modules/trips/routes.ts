@@ -1,18 +1,31 @@
 import { Router } from "express";
 import { asyncHandler } from "../../shared/asyncHandler.js";
 import { requireAuth, requireRole } from "../../middleware/auth.js";
-import { cancelTripSchema, createTripSchema, rateTripSchema, startTripSchema } from "./schemas.js";
+import { cancelTripSchema, createTripSchema, rateTripSchema, startTripSchema, trackTripQuerySchema } from "./schemas.js";
 import {
   arriveTrip,
   cancelTrip,
   completeTrip,
+  createShareLink,
   getTripForParticipant,
+  getTripForPublicTracking,
   rateTrip,
   startTrip,
 } from "./service.js";
 import { requestTrip } from "../dispatch/service.js";
 
 export const tripsRouter = Router();
+
+// Public — no auth, token-scoped (Phase 3.4 share tracking). Must be
+// registered before the requireAuth gate below.
+tripsRouter.get(
+  "/:id/track",
+  asyncHandler(async (req, res) => {
+    const { token } = trackTripQuerySchema.parse(req.query);
+    const view = await getTripForPublicTracking(req.params.id as string, token);
+    res.json({ success: true, data: view });
+  }),
+);
 
 tripsRouter.use(requireAuth);
 
@@ -77,5 +90,13 @@ tripsRouter.post(
     const { stars, review } = rateTripSchema.parse(req.body);
     const rating = await rateTrip(req.params.id as string, req.user!.id, stars, review);
     res.status(201).json({ success: true, data: rating });
+  }),
+);
+
+tripsRouter.post(
+  "/:id/share",
+  asyncHandler(async (req, res) => {
+    const link = await createShareLink(req.params.id as string, req.user!.id);
+    res.status(201).json({ success: true, data: link });
   }),
 );

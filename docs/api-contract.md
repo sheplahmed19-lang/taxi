@@ -13,7 +13,9 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
 /vehicles    types (list, any authenticated role), CRUD (admin, not yet implemented)
 /fares       estimate
 /trips       create (body may include promoCode, applied atomically with the fare estimate),
-             :id, :id/accept|arrive|start|complete|cancel, :id/rate, history, :id/track (public token)
+             :id, :id/accept|arrive|start|complete|cancel, :id/rate, history,
+             :id/share (POST, participant-only — mints a tokenized tracking link),
+             :id/track (GET, public — no auth; query: {token})
 /scheduled   create (rider; body: {pickup, drop, vehicleTypeId, paymentMethod, scheduledFor} —
              scheduledFor must be at least system_config's scheduled_dispatch_lead_minutes
              from now), list mine, :id (get), :id (PATCH, edit — only while still pending),
@@ -85,6 +87,24 @@ with `tripId` left null. Cancelling before dispatch just drops the pending jobs;
 after routes through the normal `trips/service.ts:cancelTrip` (so cancellation-fee rules
 still apply). Rider/driver app UI (datetime picker, upcoming-scheduled list rendering) is
 deferred — this phase is the backend + `GET /drivers/scheduled` endpoint only.
+
+Favorite locations: full CRUD already shipped in Phase 0.4 (`/users/me/favorites`) — no
+new backend work this phase. Wiring saved places into the rider app's pickup/drop pickers
+is deferred, same app-UI cadence as everything else in this phase.
+
+Share tracking: `POST /trips/:id/share` (participant-only) mints an opaque token stored in
+Redis (`shared/shareTokens.ts`, key → tripId, TTL from `system_config`'s
+`share_link_ttl_hours`) — deliberately not a Trip column, since it's a short-lived derived
+value with nothing to migrate. `GET /trips/:id/track?token=...` is mounted outside the
+router's `requireAuth` gate and returns a minimal read-only view (status, pickup/drop
+coords+address, driver name, vehicle plate/model/color, vehicle type — no OTP, payment
+method, fare, or phone numbers). The `/public` Socket.IO namespace (registered but inert
+since Phase 0.5) now authenticates its handshake against `{tripId, token}` instead of a JWT,
+joins the same `trip:{id}` room the authenticated `/app` namespace uses, and
+`realtime/index.ts:emitToTrip` now broadcasts to both namespaces — so a logged-out tracker
+gets the same `trip:status`/`trip:driver_location` events a participant sees, live, for as
+long as their token is valid. The minimal public React tracking page itself is deferred,
+same backend-then-app cadence as the rest of Phase 3.
 
 Weekly driver statements: a Monday-00:00 BullMQ cron
 (`jobs/weeklyStatements.ts:scheduleWeeklyStatementsCron`) generates a CSV per
