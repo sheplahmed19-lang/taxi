@@ -111,6 +111,12 @@ enum ReferralBonusStatus {
   credited
 }
 
+enum ScheduledRideStatus {
+  pending
+  dispatched
+  cancelled
+}
+
 // ── Models ───────────────────────────────────────────────────────────────
 
 model User {
@@ -558,17 +564,22 @@ model FavoriteLocation {
 }
 
 model ScheduledRide {
-  id            String   @id @default(uuid())
-  riderId       String   @map("rider_id")
-  rider         User     @relation(fields: [riderId], references: [id])
-  tripId        String?  @unique @map("trip_id")
-  trip          Trip?    @relation(fields: [tripId], references: [id])
-  pickupAddress String   @map("pickup_address")
-  dropAddress   String   @map("drop_address")
-  vehicleTypeId String   @map("vehicle_type_id")
-  scheduledFor  DateTime @map("scheduled_for")
-  status        String   @default("pending")
-  createdAt     DateTime @default(now()) @map("created_at")
+  id            String              @id @default(uuid())
+  riderId       String              @map("rider_id")
+  rider         User                @relation(fields: [riderId], references: [id])
+  tripId        String?             @unique @map("trip_id")
+  trip          Trip?               @relation(fields: [tripId], references: [id])
+  pickupAddress String              @map("pickup_address")
+  pickupLat     Float               @map("pickup_lat")
+  pickupLng     Float               @map("pickup_lng")
+  dropAddress   String              @map("drop_address")
+  dropLat       Float               @map("drop_lat")
+  dropLng       Float               @map("drop_lng")
+  vehicleTypeId String              @map("vehicle_type_id")
+  paymentMethod PaymentMethod       @map("payment_method")
+  scheduledFor  DateTime            @map("scheduled_for")
+  status        ScheduledRideStatus @default(pending)
+  createdAt     DateTime            @default(now()) @map("created_at")
 
   @@map("scheduled_rides")
   @@index([riderId])

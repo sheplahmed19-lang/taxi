@@ -4,6 +4,7 @@ import { requireAuth, requireRole } from "../../middleware/auth.js";
 import { upload } from "../../middleware/upload.js";
 import { ValidationError } from "../../shared/errors.js";
 import { getOwe, payOweFromWallet } from "../wallet/service.js";
+import { listUpcomingForDriver } from "../scheduled/service.js";
 import {
   nearbyDriversQuerySchema,
   registerDriverSchema,
@@ -95,5 +96,13 @@ driversRouter.get(
   asyncHandler(async (req, res) => {
     const statements = await listMyStatements(req.user!.id);
     res.json({ success: true, data: { statements } });
+  }),
+);
+
+driversRouter.get(
+  "/scheduled",
+  asyncHandler(async (req, res) => {
+    const trips = await listUpcomingForDriver(req.user!.id);
+    res.json({ success: true, data: { trips } });
   }),
 );

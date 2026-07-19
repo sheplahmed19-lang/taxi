@@ -8,12 +8,16 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
 /users       me, me (PATCH), favorites CRUD, notifications list
 /drivers     register, documents, availability, nearby, earnings (not yet implemented),
              statements (list, signed download URL per statement), owe (GET), owe/pay (POST,
-             settles the full outstanding amount from the driver's own wallet)
+             settles the full outstanding amount from the driver's own wallet), scheduled
+             (this driver's own accepted/arrived trips that originated as a scheduled ride)
 /vehicles    types (list, any authenticated role), CRUD (admin, not yet implemented)
 /fares       estimate
 /trips       create (body may include promoCode, applied atomically with the fare estimate),
              :id, :id/accept|arrive|start|complete|cancel, :id/rate, history, :id/track (public token)
-/scheduled   CRUD
+/scheduled   create (rider; body: {pickup, drop, vehicleTypeId, paymentMethod, scheduledFor} —
+             scheduledFor must be at least system_config's scheduled_dispatch_lead_minutes
+             from now), list mine, :id (get), :id (PATCH, edit — only while still pending),
+             :id/cancel
 /wallet      balance, transactions (cursor pagination), topup/init (body: {amount, currency?, gateway?} —
              gateway is "stripe" (default) or "paystack"); wallet is also a trip paymentMethod, settled
              atomically at trip completion with an automatic fallback to cash on insufficient balance
@@ -65,6 +69,22 @@ referral to `credited`; both wallets are credited before the status flip so a cr
 can never leave a referral marked paid without the money having moved, and postEntry's
 idempotency key makes a retried/duplicate job a no-op rather than a double-credit. Rider/
 driver app referral share sheet and dashboard UI are deferred (backend-only pass).
+
+Scheduled rides: a ScheduledRide row (pickup/drop coords + address, vehicle type, payment
+method, scheduledFor) is created immediately, but the actual Trip is NOT — that only happens
+at dispatch time, so a rider can freely book a ride for next week without it counting as
+their one "active trip" and blocking an immediate ride today. `jobs/scheduledRides.ts`
+schedules two BullMQ delayed jobs per ride at creation (and re-schedules them on every edit):
+a reminder push at T-`scheduled_reminder_minutes` and, at T-`scheduled_dispatch_lead_minutes`,
+a combined reminder+dispatch job that calls the exact same `dispatch/service.ts:requestTrip`
+path an immediate request goes through, then links the resulting `Trip.id` back onto the
+`ScheduledRide` row (`status: dispatched`). A rider who happens to have another active trip
+right at dispatch time gets a clear "couldn't start your scheduled ride" push instead of the
+ride silently vanishing — the row still moves to `dispatched` (meaning "handed off"), just
+with `tripId` left null. Cancelling before dispatch just drops the pending jobs; cancelling
+after routes through the normal `trips/service.ts:cancelTrip` (so cancellation-fee rules
+still apply). Rider/driver app UI (datetime picker, upcoming-scheduled list rendering) is
+deferred — this phase is the backend + `GET /drivers/scheduled` endpoint only.
 
 Weekly driver statements: a Monday-00:00 BullMQ cron
 (`jobs/weeklyStatements.ts:scheduleWeeklyStatementsCron`) generates a CSV per

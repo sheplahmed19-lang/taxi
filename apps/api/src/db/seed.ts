@@ -74,6 +74,8 @@ async function main(): Promise<void> {
     { key: "owe_block_threshold", value: 10000 },
     { key: "referral_bonus_rider", value: 500 },
     { key: "referral_bonus_driver", value: 1000 },
+    { key: "scheduled_reminder_minutes", value: 60 },
+    { key: "scheduled_dispatch_lead_minutes", value: 15 },
   ];
 
   for (const cfg of systemConfig) {

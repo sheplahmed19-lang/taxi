@@ -37,6 +37,8 @@ export interface CreateTripInput {
   vehicleTypeId: string;
   paymentMethod: "cash" | "wallet" | "card";
   promoCode?: string;
+  /** Set when this trip originated from a ScheduledRide firing at its dispatch time — see jobs/scheduledRides.ts. */
+  scheduledAt?: Date;
 }
 
 /**
@@ -94,6 +96,7 @@ export async function createTripRecord(riderId: string, input: CreateTripInput) 
       paymentMethod: input.paymentMethod,
       paymentStatus: "pending",
       promoId,
+      scheduledAt: input.scheduledAt,
       requestedAt: new Date(),
     },
   });
