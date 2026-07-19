@@ -41,11 +41,13 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              over the /app socket is the primary path), :tripId/read (POST, marks the other
              participant's messages read)
 /admin       dashboard, drivers, users, staff, roles, zones, config,
-             trips, manual-booking, broadcasts, reports/*, heatmap,
+             trips, manual-booking, reports/*, heatmap,
              subscriptions/plans (POST), subscriptions/plans/:id (PATCH),
              payouts (list, filter by status), payouts/:id/approve|reject|paid,
              owe (report of drivers with a positive balance), owe/:driverId/adjust
              (body: {delta, reason} — signed delta, clamped at 0, audit-logged),
+             broadcasts (POST; body: {title, body, segment: "all_riders"|"all_drivers"|"zone",
+             zoneId? — required iff segment is "zone"}, fans out via BullMQ, audit-logged),
              promos (POST create, PATCH :id update, DELETE :id — blocked once redeemed,
              deactivate instead)
 ```
@@ -119,6 +121,21 @@ read, backing an unread-badge count. Call buttons are a plain `tel:` link in the
 app UI — no backend surface needed for v1; a Twilio masked-proxy call is noted in the plan
 as a v2 upgrade, not built here. Chat UI and unread badges in both apps are deferred, same
 backend-then-app cadence as the rest of Phase 3.
+
+Notifications center: the in-app notification list (`GET /users/me/notifications`) has
+existed since Phase 0.5; the new piece is `POST /admin/broadcasts`. `all_riders`/
+`all_drivers` resolve directly off `User.role`; `zone` resolves to currently-*online*
+drivers (any vehicle type) whose live Redis GEO position falls inside the given zone's
+polygon (`ST_Contains`, one query per candidate driver — riders have no persistent live
+position to filter by, so `zone` only ever targets drivers). Actually sending is handed off
+to a new BullMQ job (`jobs/broadcasts.ts`) rather than done inline — a segment can be
+thousands of recipients, and the per-recipient FCM call inside `sendToUser` shouldn't block
+the admin's HTTP response — and one recipient's delivery failure (e.g. a stale FCM token)
+never aborts the rest of the batch. Every broadcast is audit-logged (`shared/auditLog.ts`,
+same trail as the payout/owe admin actions) with the resolved recipient count. In-app
+notification list *screens* (as opposed to the list endpoint itself, which predates this
+phase) are deferred, same backend-then-app cadence as the rest of Phase 3 — this closes out
+Phase 3.
 
 Weekly driver statements: a Monday-00:00 BullMQ cron
 (`jobs/weeklyStatements.ts:scheduleWeeklyStatementsCron`) generates a CSV per

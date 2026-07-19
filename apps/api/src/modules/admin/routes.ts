@@ -8,8 +8,8 @@ import { createPromo, deletePromo, listPromos, updatePromo } from "../promos/ser
 import { createPlanSchema, updatePlanSchema } from "../subscriptions/schemas.js";
 import { createPlan, updatePlan } from "../subscriptions/service.js";
 import { adjustOwe, listOweReport } from "../wallet/service.js";
-import { adjustOweSchema, listDriversQuerySchema, rejectDriverSchema } from "./schemas.js";
-import { approveDriver, listDrivers, rejectDriver } from "./service.js";
+import { adjustOweSchema, listDriversQuerySchema, rejectDriverSchema, sendBroadcastSchema } from "./schemas.js";
+import { approveDriver, listDrivers, rejectDriver, sendBroadcast } from "./service.js";
 
 export const adminRouter = Router();
 
@@ -142,5 +142,14 @@ adminRouter.post(
     const { delta, reason } = adjustOweSchema.parse(req.body);
     await adjustOwe(req.params.driverId as string, delta, reason, req.user!.id);
     res.json({ success: true, data: { adjusted: true } });
+  }),
+);
+
+adminRouter.post(
+  "/broadcasts",
+  asyncHandler(async (req, res) => {
+    const data = sendBroadcastSchema.parse(req.body);
+    const result = await sendBroadcast(req.user!.id, data);
+    res.status(201).json({ success: true, data: result });
   }),
 );
