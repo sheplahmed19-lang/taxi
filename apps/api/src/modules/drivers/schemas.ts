@@ -28,3 +28,7 @@ export const nearbyDriversQuerySchema = z.object({
   vehicleTypeId: z.string().uuid().optional(),
   radiusKm: z.coerce.number().positive().max(50).optional(),
 });
+
+export const statementsQuerySchema = z.object({
+  driverId: z.string().uuid().optional(),
+});

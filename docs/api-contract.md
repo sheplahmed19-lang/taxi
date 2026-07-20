@@ -11,6 +11,22 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              settles the full outstanding amount from the driver's own wallet), scheduled
              (this driver's own accepted/arrived trips that originated as a scheduled ride)
 /vehicles    types (list, any authenticated role); admin CRUD lives under /admin
+/zones       list (GET — polygon as a lat/lng ring via ST_AsGeoJSON), create (POST; body:
+             {name, active?, fareOverrides?, polygon} — polygon is an array of >=3 {lat,lng}
+             points, closed automatically if the caller didn't repeat the first point),
+             :id (PATCH — any subset of name/active/fareOverrides/polygon), :id (DELETE);
+             admin/staff/dispatcher only — fareOverrides shallow-merges onto the vehicle
+             type's base rates in fares/engine.ts, so a zone change affects fare estimates
+             immediately, zero fare-engine changes needed
+/dispatch    manual-booking (POST; body: {phone, name?, pickup, drop, vehicleTypeId,
+             paymentMethod, driverId?} — finds-or-creates the rider by phone; with driverId,
+             skips the nearest-candidate cascade and force-assigns that one driver instead,
+             immediately accepted on their behalf); admin/staff/dispatcher only
+/reports     financial (GET; query: {from, to, format?} — daily gross fare/commission/net
+             driver-earnings breakdown for paid trips in range), operations (GET; query:
+             {from, to, format?} — trip-status breakdown, completion rate, avg fare/distance
+             for trips *requested* in range); format=csv streams a CSV download instead of
+             JSON; admin/staff/dispatcher only
 /fares       estimate
 /trips       create (body may include promoCode, applied atomically with the fare estimate),
              :id, :id/accept|arrive|start|complete|cancel, :id/rate, history,
@@ -57,12 +73,23 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              live/drivers (GET — every currently-online driver, any vehicle type, with
              identity + live position, for the realtime map), live/trips (GET — every
              non-terminal trip with pickup/drop and the assigned driver's live position),
-             trips/:id (GET — full admin trip detail incl. the trip_locations route replay,
-             no participant restriction), heatmap/demand (GET; query: {from?, to?} — one
-             point per trip pickup in range, ISO date strings, omit either bound for
+             trips (GET — full filterable trip list incl. history, unlike live/trips;
+             query: {status?, search?, from?, to?}), trips/:id (GET — full admin trip
+             detail incl. the trip_locations route replay, no participant restriction),
+             trips/:id/cancel (POST; body: {reason} — staff-initiated cancel, bypasses the
+             participant check /trips/:id/cancel enforces; only requested/searching/
+             accepted/arrived trips, never charges a fee, cancelledBy stays null — the
+             AuditLog entry is the record of who/why), trips/:id/reassign (POST; body:
+             {driverId} — swaps the driver on an accepted/arrived trip; releases the old
+             driver back to their GEO pool, locks the new one; status is unchanged, this
+             isn't a state-machine transition), heatmap/demand (GET; query: {from?, to?} —
+             one point per trip pickup in range, ISO date strings, omit either bound for
              unbounded), heatmap/supply (GET — online driver positions; always a live
              snapshot, no time filter, see below),
-             zones, manual-booking, reports/* (not yet implemented — Phase 4.4),
+             statements (GET; query: {driverId?} — every driver's weekly statements, or one
+             driver's, unlike /drivers' own-statements-only view),
+             my-fleet (GET — fleet_owner only, not admin/staff/dispatcher: caller's own
+             Vehicle.fleetOwnerId/DriverProfile.fleetOwnerId-scoped vehicles+drivers),
              subscriptions/plans (POST), subscriptions/plans/:id (PATCH),
              payouts (list, filter by status), payouts/:id/approve|reject|paid,
              owe (report of drivers with a positive balance), owe/:driverId/adjust
@@ -240,5 +267,78 @@ Leaflet base map itself renders as blank gray tiles here; everything that doesn'
 external imagery — markers, popups, clustering, heat layers, the live socket updates, the
 route replay polyline and playback — was verified working. This is an environment constraint,
 not a code path left untested; it would render normally wherever outbound HTTPS is unrestricted.
+
+Dispatcher/company panel (Phase 4.4): seven backend areas plus a two-tier RBAC split, all
+migration-free. `admin/routes.ts`'s single `requireRole("admin","staff")` router-wide gate
+became per-route: `STAFF_ONLY` (identity/compliance/config/RBAC — driver verification, user
+management, vehicle-type/config editing, promos, subscription plans, roles) stays admin/staff-
+exclusive; `OPS_ROLES` (dashboard, live map, trip management, payouts, owe, broadcasts,
+statements) now also admits `dispatcher` — matching the plan's explicit feature list for this
+phase. `fleet_owner` gets none of the router-wide access; instead a single new
+`GET /admin/my-fleet` endpoint, gated to `fleet_owner` only, scopes to
+`Vehicle.fleetOwnerId`/`DriverProfile.fleetOwnerId` (present in the schema since Phase 0,
+unused until now) — a deliberate, disclosed scope decision: platform financial operations
+(payouts, owe) stay dispatcher/admin-only, since a fleet owner doesn't control money the
+platform owes its drivers; the company panel is a read-only "my fleet" view, not a parallel
+operational surface.
+
+Manual booking reuses `dispatch/service.ts:requestTrip` with a new optional `driverId` — when
+set, `assignDriverToTrip` offers the trip to exactly that one driver (still acquiring their
+dispatch lock, so a concurrent real dispatch can't double-book them) and immediately accepts
+on their behalf, reusing the same offer/accept bookkeeping the normal driver-initiated flow
+goes through rather than duplicating it. It also checks the driver is actually in the live GEO
+pool, not just `DriverProfile.online = true` — a driver mid-trip is still "online" in the DB
+but was already pulled from the pool on acceptance, a real bug caught by a test expecting the
+opposite and fixed before merge. `reassignTripDriver` shares that same pool check; it patches
+`driverId`/`vehicleId` directly rather than going through `transitionTrip`, since a reassign
+never changes `Trip.status` (CLAUDE.md rule 2 only governs status transitions). Admin cancel
+(`cancelTripAsAdmin`) is deliberately migration-free too: rather than adding an `"admin"` value
+to the `CancelledBy` enum for one more reporting nicety, `cancelledBy` stays `null` and the new
+`AuditLog` entry is the record of who cancelled and why — same pattern as every other admin
+action in this codebase. Building both `cancelTripAsAdmin` and the reassign path surfaced (and
+fixed) a real pre-existing gap in the original participant-facing `cancelTrip`: a driver on a
+cancelled trip was never re-added to the live GEO pool, silently stuck "phantom busy" — both
+paths now share a `releaseDriverBackToPool` helper.
+
+Reports and CSV export were built from scratch (`reports/service.ts` was a stub). A new
+`shared/csv.ts:toCsv` generalizes the dependency-free CSV pattern `jobs/weeklyStatements.ts`
+already established, rather than a third hand-rolled copy. `getFinancialReport` buckets paid
+trips by day (gross fare) and joins `LedgerEntry` rows by day (commission debits, net driver
+earnings — ride_earning credit minus commission debit, same "what the driver actually keeps"
+convention `weeklyStatements.ts` uses for a single driver's own statement). `getOperationsReport`
+is a trip-status breakdown with completion rate and fare/distance averages. Both routes accept
+`format=csv` to stream a download instead of JSON.
+
+The geofence/zone polygon editor (`zones/routes.ts` was also a stub) follows the existing
+raw-geometry read/write precedent exactly: `ST_GeomFromText('POLYGON((...))', 4326)` to write
+(same pattern `db/seed.ts` already used for the seeded test zone, just parameterized instead of
+hardcoded), `ST_AsGeoJSON(polygon)` to read a ring back for the map editor (previously unused
+anywhere). `fareOverrides` was already live-wired into fare calculation since Phase 0/1
+(`fares/service.ts` calls `findZoneContaining` and shallow-merges its `fareOverrides` onto the
+vehicle type's base rates in `fares/engine.ts`) — zones CRUD needed zero fare-engine changes to
+satisfy the Phase 4 acceptance criterion "zone editor changes affect fare estimates
+immediately," confirmed by a test that creates a zone with an overridden `baseFare` and asserts
+a fare estimate inside it jumps accordingly.
+
+40 new backend tests across 6 files (manual booking, trip management, statements, reports,
+zones CRUD, plus the RBAC split verified live rather than via a new automated test file — this
+codebase has never used HTTP-level route testing, only service-layer unit tests, so per-route
+role gating was checked with real HTTP requests as three different logged-in roles instead);
+full suite 286/286 passing. Live E2E-verified over real HTTP: a dispatcher booking a ride with
+a chosen driver (immediately `accepted`), reassigning it, admin-cancelling it, and a
+zone-created fare override showing up in a live fare estimate — all exactly as designed.
+Frontend: a full dispatcher panel (`DispatcherLayout` + 8 new pages — manual booking, trip
+management, payouts, owe, statements, reports with CSV download via a blob-URL helper since a
+plain `<a href>` can't carry the auth header, a broadcast composer, and a zone editor combining
+`react-leaflet` with `leaflet-draw` wired directly against the underlying Leaflet map instance
+via `useMap()` — there's no actively-maintained React wrapper for `leaflet-draw` compatible
+with `react-leaflet` v4) reusing Phase 4.3's `LiveOpsPage`/`TripDetailPage` outright (just a new
+`basePath` prop on `LiveOpsPage` so its trip-marker links point at `/dispatcher/trips/:id`
+instead of `/admin/trips/:id`) rather than duplicating ~250 lines of map code; and a lightweight
+company panel (`CompanyLayout` + one `CompanyFleetPage` calling `/admin/my-fleet`). Verified via
+Playwright in a real browser across both panels and three logged-in roles — 15/15 checks
+passed, including the full manual-booking → trip-management → cancel flow and the zone editor's
+draw toolbar rendering (same disclosed blank-tile-imagery limitation as Phase 4.3 — no outbound
+network access to any tile CDN in this sandbox).
 
 Keep this file in sync with the actual Express routers under `apps/api/src/modules/*`.

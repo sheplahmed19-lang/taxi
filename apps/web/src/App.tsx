@@ -9,10 +9,20 @@ import { ConfigPage } from "./panels/admin/ConfigPage";
 import { RolesPage } from "./panels/admin/RolesPage";
 import { LiveOpsPage } from "./panels/admin/LiveOpsPage";
 import { TripDetailPage } from "./panels/admin/TripDetailPage";
+import { DispatcherLayout } from "./panels/dispatcher/DispatcherLayout";
+import { ManualBookingPage } from "./panels/dispatcher/ManualBookingPage";
+import { TripManagementPage } from "./panels/dispatcher/TripManagementPage";
+import { PayoutsPage } from "./panels/dispatcher/PayoutsPage";
+import { OwePage } from "./panels/dispatcher/OwePage";
+import { StatementsPage } from "./panels/dispatcher/StatementsPage";
+import { ReportsPage } from "./panels/dispatcher/ReportsPage";
+import { BroadcastComposerPage } from "./panels/dispatcher/BroadcastComposerPage";
+import { ZonesPage } from "./panels/dispatcher/ZonesPage";
+import { CompanyLayout } from "./panels/company/CompanyLayout";
+import { CompanyFleetPage } from "./panels/company/CompanyFleetPage";
 import { LoginPage } from "./shared/LoginPage";
 import { AuthProvider, useAuth } from "./shared/AuthProvider";
 import { ProtectedRoute } from "./shared/ProtectedRoute";
-import { PlaceholderPanel } from "./shared/PlaceholderPanel";
 import { panelPathForRole } from "./shared/auth";
 
 const queryClient = new QueryClient({
@@ -47,11 +57,25 @@ export function App() {
             </Route>
 
             <Route element={<ProtectedRoute allowedRoles={["fleet_owner"]} />}>
-              <Route path="/company" element={<PlaceholderPanel title="Company panel" phase="Phase 4.4 — Dispatcher/company panel" />} />
+              <Route path="/company" element={<CompanyLayout />}>
+                <Route index element={<CompanyFleetPage />} />
+              </Route>
             </Route>
 
             <Route element={<ProtectedRoute allowedRoles={["dispatcher"]} />}>
-              <Route path="/dispatcher" element={<PlaceholderPanel title="Dispatcher panel" phase="Phase 4.4 — Dispatcher/company panel" />} />
+              <Route path="/dispatcher" element={<DispatcherLayout />}>
+                <Route index element={<AdminDashboard />} />
+                <Route path="live" element={<LiveOpsPage basePath="/dispatcher" />} />
+                <Route path="book" element={<ManualBookingPage />} />
+                <Route path="trips" element={<TripManagementPage />} />
+                <Route path="trips/:id" element={<TripDetailPage />} />
+                <Route path="payouts" element={<PayoutsPage />} />
+                <Route path="owe" element={<OwePage />} />
+                <Route path="statements" element={<StatementsPage />} />
+                <Route path="reports" element={<ReportsPage />} />
+                <Route path="broadcast" element={<BroadcastComposerPage />} />
+                <Route path="zones" element={<ZonesPage />} />
+              </Route>
             </Route>
 
             <Route path="/" element={<RootRedirect />} />

@@ -1,6 +1,7 @@
+import { TripStatus } from "@prisma/client";
 import { z } from "zod";
 
-const locationSchema = z.object({
+export const locationSchema = z.object({
   lat: z.number().min(-90).max(90),
   lng: z.number().min(-180).max(180),
   address: z.string().max(255).optional(),
@@ -29,4 +30,21 @@ export const rateTripSchema = z.object({
 
 export const trackTripQuerySchema = z.object({
   token: z.string().min(1),
+});
+
+// ── Dispatcher panel: trip management (Phase 4.4) ───────────────────────────
+
+export const adminListTripsQuerySchema = z.object({
+  status: z.nativeEnum(TripStatus).optional(),
+  search: z.string().max(120).optional(),
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});
+
+export const adminCancelTripSchema = z.object({
+  reason: z.string().min(1).max(500),
+});
+
+export const reassignTripSchema = z.object({
+  driverId: z.string().uuid(),
 });

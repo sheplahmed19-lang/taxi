@@ -7,8 +7,12 @@ import { logger } from "../../shared/logger.js";
 import { getConfigValue } from "../../shared/config.js";
 import { getRoute } from "../../shared/maps.js";
 import { sendPushToUser } from "../../shared/fcm.js";
-import { emitToUser, joinTripRoom } from "../../realtime/index.js";
+import { ConflictError, NotFoundError } from "../../shared/errors.js";
+import { emitToUser, joinTripRoom, leaveTripRoom } from "../../realtime/index.js";
 import { geoSetKey, getDriverState } from "../drivers/service.js";
+import { findOrCreateUserByPhone } from "../auth/service.js";
+import { sendToUser } from "../notifications/service.js";
+import { logAudit } from "../../shared/auditLog.js";
 import { createTripRecord, getTripPickupPoint, transitionTrip, type CreateTripInput } from "../trips/service.js";
 import { scheduleDispatchTimeout } from "../../jobs/dispatchTimeout.js";
 
@@ -178,12 +182,194 @@ export async function attemptDispatch(tripId: string): Promise<void> {
   await offerToDriver(trip, candidate, timeoutS, pickup);
 }
 
-/** Creates the trip and kicks off the first dispatch attempt. */
-export async function requestTrip(riderId: string, input: CreateTripInput) {
+/**
+ * Creates the trip and kicks off dispatch. `driverId` is the dispatcher
+ * panel's "assign this specific driver" path (manual booking) — when set,
+ * the normal nearest-candidate cascade is skipped in favor of offering the
+ * trip to exactly that one driver and immediately accepting on their
+ * behalf. Regular riders never pass this; only admin/staff/dispatcher.
+ */
+export async function requestTrip(riderId: string, input: CreateTripInput, opts: { driverId?: string } = {}) {
   const trip = await createTripRecord(riderId, input);
   await transitionTrip(trip.id, "dispatch");
-  await attemptDispatch(trip.id);
+  if (opts.driverId) {
+    await assignDriverToTrip(trip.id, opts.driverId);
+  } else {
+    await attemptDispatch(trip.id);
+  }
   return prisma.trip.findUniqueOrThrow({ where: { id: trip.id } });
+}
+
+/**
+ * Offers the trip to exactly one chosen driver (still acquiring their
+ * dispatch lock, so they can't be double-booked by a concurrent real
+ * dispatch) and immediately accepts on their behalf — reuses the same
+ * offer/accept bookkeeping the normal driver-initiated flow goes through,
+ * just without waiting for the driver to respond.
+ */
+export async function assignDriverToTrip(tripId: string, driverId: string): Promise<void> {
+  const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+  if (!trip || trip.status !== "searching") {
+    throw new ConflictError("Trip is not awaiting dispatch");
+  }
+
+  const driverProfile = await prisma.driverProfile.findUnique({
+    where: { userId: driverId },
+    include: { currentVehicle: true },
+  });
+  if (!driverProfile?.online || !driverProfile.currentVehicle) {
+    throw new ConflictError("Driver is not online");
+  }
+  if (driverProfile.currentVehicle.vehicleTypeId !== trip.vehicleTypeId) {
+    throw new ConflictError("Driver's vehicle type doesn't match this trip's requested vehicle type");
+  }
+  // online alone isn't enough — a driver already on a trip is still "online"
+  // in the DB but was zrem'd from the live GEO pool on acceptance (see
+  // handleDriverResponse below). Pool membership is the actual "free" signal.
+  const inPool = await redis.zscore(geoSetKey(driverProfile.currentVehicle.vehicleTypeId), driverId);
+  if (inPool === null) {
+    throw new ConflictError("Driver is not available for dispatch right now");
+  }
+
+  const timeoutS = await getConfigValue("dispatch_timeout_s", 15);
+  const lockTtlS = timeoutS + 5;
+  const locked = await redis.set(driverLockKey(driverId), tripId, "EX", lockTtlS, "NX");
+  if (locked !== "OK") {
+    throw new ConflictError("Driver is already locked to another dispatch");
+  }
+
+  const pickup = await getTripPickupPoint(tripId);
+  if (!pickup) {
+    await redis.del(driverLockKey(driverId));
+    throw new ConflictError("Trip has no pickup location on record");
+  }
+
+  await offerToDriver(trip, { driverId, distanceM: 0 }, timeoutS, pickup);
+  await handleDriverResponse(tripId, driverId, true);
+}
+
+export interface ManualBookingInput {
+  phone: string;
+  name?: string;
+  pickup: { lat: number; lng: number; address?: string };
+  drop: { lat: number; lng: number; address?: string };
+  vehicleTypeId: string;
+  paymentMethod: "cash" | "wallet" | "card";
+  /** Skips the normal nearest-driver cascade in favor of this specific driver. */
+  driverId?: string;
+}
+
+/**
+ * Dispatcher panel's "book a ride for a phone number" flow. The rider
+ * account is found-or-created by phone (same primitive the OTP signup path
+ * uses) rather than requiring the caller to already have a rider id.
+ */
+export async function createManualBooking(actorId: string, input: ManualBookingInput) {
+  const rider = await findOrCreateUserByPhone(input.phone, "rider");
+  if (input.name && !rider.name) {
+    await prisma.user.update({ where: { id: rider.id }, data: { name: input.name } });
+  }
+
+  const trip = await requestTrip(
+    rider.id,
+    {
+      pickup: input.pickup,
+      drop: input.drop,
+      vehicleTypeId: input.vehicleTypeId,
+      paymentMethod: input.paymentMethod,
+    },
+    { driverId: input.driverId },
+  );
+
+  await logAudit(actorId, "trip.manual_booking", "trip", trip.id, {
+    phone: input.phone,
+    driverId: input.driverId ?? null,
+  });
+
+  return trip;
+}
+
+/**
+ * Dispatcher panel's reassign action: swaps the driver on an already-accepted
+ * (not yet started) trip. This isn't a state-machine transition — Trip.status
+ * is unchanged, only driverId/vehicleId — so it doesn't go through
+ * transitionTrip (CLAUDE.md rule 2 only governs status changes). The old
+ * driver is released back to their GEO pool; the new one is locked and takes
+ * over, same as a fresh acceptance.
+ */
+export async function reassignTripDriver(tripId: string, newDriverId: string, actorId: string): Promise<Trip> {
+  const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+  if (!trip) {
+    throw new NotFoundError("Trip not found");
+  }
+  if (trip.status !== "accepted" && trip.status !== "arrived") {
+    throw new ConflictError("Only an accepted or arrived trip can be reassigned");
+  }
+  if (trip.driverId === newDriverId) {
+    throw new ConflictError("Trip is already assigned to this driver");
+  }
+
+  const newDriverProfile = await prisma.driverProfile.findUnique({
+    where: { userId: newDriverId },
+    include: { currentVehicle: true },
+  });
+  if (!newDriverProfile?.online || !newDriverProfile.currentVehicle) {
+    throw new ConflictError("Driver is not online");
+  }
+  if (newDriverProfile.currentVehicle.vehicleTypeId !== trip.vehicleTypeId) {
+    throw new ConflictError("Driver's vehicle type doesn't match this trip's requested vehicle type");
+  }
+  const inPool = await redis.zscore(geoSetKey(newDriverProfile.currentVehicle.vehicleTypeId), newDriverId);
+  if (inPool === null) {
+    throw new ConflictError("Driver is not available for dispatch right now");
+  }
+
+  const locked = await redis.set(driverLockKey(newDriverId), tripId, "EX", 30, "NX");
+  if (locked !== "OK") {
+    throw new ConflictError("Driver is already locked to another dispatch");
+  }
+
+  const oldDriverId = trip.driverId;
+
+  const updated = await prisma.trip.update({
+    where: { id: tripId },
+    data: { driverId: newDriverId, vehicleId: newDriverProfile.vehicleId },
+  });
+
+  await redis.zrem(geoSetKey(newDriverProfile.currentVehicle.vehicleTypeId), newDriverId);
+  await redis.del(driverLockKey(newDriverId));
+
+  if (oldDriverId) {
+    leaveTripRoom(oldDriverId, tripId);
+    const oldProfile = await prisma.driverProfile.findUnique({
+      where: { userId: oldDriverId },
+      include: { currentVehicle: true },
+    });
+    if (oldProfile?.online && oldProfile.currentVehicle) {
+      const oldState = await getDriverState(oldDriverId);
+      if (oldState) {
+        await redis.geoadd(geoSetKey(oldProfile.currentVehicle.vehicleTypeId), oldState.lng, oldState.lat, oldDriverId);
+      }
+    }
+    await sendToUser(oldDriverId, {
+      title: "Trip reassigned",
+      body: "This trip was reassigned to another driver.",
+      data: { tripId, type: "trip_reassigned" },
+    });
+  }
+
+  joinTripRoom(newDriverId, tripId);
+  emitToUser(newDriverId, "trip:status", { tripId, status: updated.status, payload: { reassigned: true } });
+  await sendToUser(newDriverId, {
+    title: "Trip assigned to you",
+    body: trip.pickupAddress ? `Pickup: ${trip.pickupAddress}` : "New trip assigned",
+    data: { tripId, type: "trip_reassigned" },
+  });
+  emitToUser(trip.riderId, "trip:status", { tripId, status: updated.status, payload: { reassigned: true } });
+
+  await logAudit(actorId, "trip.reassign", "trip", tripId, { fromDriverId: oldDriverId, toDriverId: newDriverId });
+
+  return updated;
 }
 
 /** Called by jobs/dispatchTimeout.ts when an offer's dispatch_timeout_s elapses with no response. */

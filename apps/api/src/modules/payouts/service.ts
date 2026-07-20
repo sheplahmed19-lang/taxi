@@ -49,6 +49,7 @@ export async function listMyPayouts(driverId: string) {
 export async function listPayouts(status?: "requested" | "approved" | "paid" | "rejected") {
   return prisma.payout.findMany({
     where: status ? { status } : undefined,
+    include: { driver: { include: { user: { select: { name: true, phone: true } } } } },
     orderBy: { createdAt: "desc" },
   });
 }

@@ -22,6 +22,7 @@ import {
 } from "../promos/service.js";
 import { enqueueReferralBonusCheck } from "../../jobs/referralBonus.js";
 import { createTripShareToken, resolveTripShareToken } from "../../shared/shareTokens.js";
+import { logAudit } from "../../shared/auditLog.js";
 import { nextStatus, type TripEvent, type TripStatus } from "./state-machine.js";
 
 export const ACTIVE_TRIP_EXCLUDED_STATUSES: TripStatus[] = [
@@ -551,6 +552,20 @@ export async function markTripPaid(tripId: string, amountPaid: number): Promise<
   emitToTrip(tripId, "trip:status", { tripId, status: updated.status });
 }
 
+/** Puts a driver released from a trip (cancel/reassign) back in their live GEO pool, if still online. */
+async function releaseDriverBackToPool(driverId: string): Promise<void> {
+  const profile = await prisma.driverProfile.findUnique({
+    where: { userId: driverId },
+    include: { currentVehicle: true },
+  });
+  if (profile?.online && profile.currentVehicle) {
+    const state = await getDriverState(driverId);
+    if (state) {
+      await redis.geoadd(geoSetKey(profile.currentVehicle.vehicleTypeId), state.lng, state.lat, driverId);
+    }
+  }
+}
+
 /**
  * Either participant can cancel. A rider cancelling after the driver has
  * already accepted (or arrived) incurs the configured cancellation_fee —
@@ -588,6 +603,10 @@ export async function cancelTrip(tripId: string, userId: string, reason: string)
     await releasePromoRedemption(tripId);
   }
 
+  if (trip.driverId) {
+    await releaseDriverBackToPool(trip.driverId);
+  }
+
   const otherPartyId = isRider ? trip.driverId : trip.riderId;
   if (otherPartyId) {
     emitToUser(otherPartyId, "trip:status", {
@@ -596,6 +615,45 @@ export async function cancelTrip(tripId: string, userId: string, reason: string)
       payload: { reason, cancelledBy },
     });
   }
+
+  return updated;
+}
+
+const ADMIN_CANCELLABLE_STATUSES: TripStatus[] = ["requested", "searching", "accepted", "arrived"];
+
+/**
+ * Dispatcher/admin cancel — bypasses the participant check `cancelTrip`
+ * enforces. Only trips that haven't started yet can be cancelled this way
+ * (a trip already in progress should be completed, not cancelled out from
+ * under the rider/driver). Never charges a cancellation fee — unlike a
+ * rider backing out, a staff-initiated cancel is presumed operational, not
+ * the rider's choice. `cancelledBy` stays null (there's no "admin" value in
+ * the CancelledBy enum, and adding one would need a migration for a fairly
+ * marginal reporting nicety) — the AuditLog entry below is the record of
+ * who cancelled and why, same pattern as every other admin action.
+ */
+export async function cancelTripAsAdmin(tripId: string, actorId: string, reason: string) {
+  const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+  if (!trip) {
+    throw new NotFoundError("Trip not found");
+  }
+  if (!ADMIN_CANCELLABLE_STATUSES.includes(trip.status)) {
+    throw new ConflictError("Only a trip that hasn't started yet can be cancelled by staff");
+  }
+
+  const updated = await transitionTrip(tripId, "rider_cancel", { cancelReason: reason });
+
+  if (trip.promoId) {
+    await releasePromoRedemption(tripId);
+  }
+
+  if (trip.driverId) {
+    await releaseDriverBackToPool(trip.driverId);
+    emitToUser(trip.driverId, "trip:status", { tripId, status: updated.status, payload: { reason, cancelledBy: "admin" } });
+  }
+  emitToUser(trip.riderId, "trip:status", { tripId, status: updated.status, payload: { reason, cancelledBy: "admin" } });
+
+  await logAudit(actorId, "trip.cancel", "trip", tripId, { reason });
 
   return updated;
 }

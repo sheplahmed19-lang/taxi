@@ -14,7 +14,7 @@ import {
   getTripPickupPoint,
   getTripRoute,
 } from "../trips/service.js";
-import type { DriverVerificationStatus } from "@prisma/client";
+import type { DriverVerificationStatus, TripStatus } from "@prisma/client";
 
 /** Checks whether a user's assigned StaffRole grants the given permission key. */
 export async function userHasPermission(userId: string, permissionKey: string): Promise<boolean> {
@@ -411,4 +411,42 @@ export async function getDemandHeatmap(from?: Date, to?: Date): Promise<HeatmapP
 export async function getSupplyHeatmap(): Promise<HeatmapPoint[]> {
   const drivers = await listOnlineDrivers();
   return drivers.map((d) => ({ lat: d.lat, lng: d.lng }));
+}
+
+// ── Trip management (Phase 4.4) ─────────────────────────────────────────────
+// listActiveTripsForMap (above) only ever returns non-terminal trips, for the
+// live map. This is the full, filterable list for the trip management page —
+// history included.
+
+export interface AdminListTripsQuery {
+  status?: TripStatus;
+  search?: string;
+  from?: Date;
+  to?: Date;
+}
+
+export async function adminListTrips(query: AdminListTripsQuery) {
+  return prisma.trip.findMany({
+    where: {
+      status: query.status,
+      createdAt: query.from || query.to ? { gte: query.from, lte: query.to } : undefined,
+      ...(query.search
+        ? {
+            OR: [
+              { rider: { phone: { contains: query.search, mode: "insensitive" as const } } },
+              { rider: { name: { contains: query.search, mode: "insensitive" as const } } },
+              { driver: { phone: { contains: query.search, mode: "insensitive" as const } } },
+              { driver: { name: { contains: query.search, mode: "insensitive" as const } } },
+            ],
+          }
+        : {}),
+    },
+    include: {
+      rider: { select: { name: true, phone: true } },
+      driver: { select: { name: true, phone: true } },
+      vehicleType: { select: { name: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 100,
+  });
 }

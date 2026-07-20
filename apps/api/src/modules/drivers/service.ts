@@ -286,3 +286,20 @@ export async function listMyStatements(driverId: string) {
     })),
   );
 }
+
+/** Dispatcher panel's statements view (Phase 4.4) — any driver, or all of them, unlike listMyStatements above. */
+export async function listStatementsForAdmin(driverId?: string) {
+  const statements = await prisma.driverStatement.findMany({
+    where: driverId ? { driverId } : undefined,
+    include: { driver: { include: { user: { select: { name: true, phone: true } } } } },
+    orderBy: { periodEnd: "desc" },
+    take: 200,
+  });
+
+  return Promise.all(
+    statements.map(async (statement) => ({
+      ...statement,
+      downloadUrl: await getSignedObjectUrl(statement.objectKey),
+    })),
+  );
+}

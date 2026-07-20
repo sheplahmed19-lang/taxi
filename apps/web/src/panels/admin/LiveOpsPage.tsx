@@ -58,7 +58,12 @@ function HeatLayer({ points }: { points: HeatmapPoint[] }) {
   return null;
 }
 
-export function LiveOpsPage() {
+interface LiveOpsPageProps {
+  /** Trip marker popup links use this — dispatcher mounts this same page under /dispatcher and needs /dispatcher/trips/:id, not /admin/trips/:id. */
+  basePath?: string;
+}
+
+export function LiveOpsPage({ basePath = "/admin" }: LiveOpsPageProps) {
   const socket = useAdminSocket();
 
   const [showDrivers, setShowDrivers] = useState(true);
@@ -202,7 +207,7 @@ export function LiveOpsPage() {
               {t.pickup && (
                 <Marker position={[t.pickup.lat, t.pickup.lng]} icon={pickupIcon}>
                   <Popup>
-                    Trip <Link to={`/admin/trips/${t.tripId}`}>{t.tripId.slice(0, 8)}</Link>
+                    Trip <Link to={`${basePath}/trips/${t.tripId}`}>{t.tripId.slice(0, 8)}</Link>
                     <br />
                     Status: {t.status}
                     <br />
