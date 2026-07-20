@@ -1,8 +1,11 @@
 // users module service — business logic lives here.
 // Other modules must only import from this file, never from routes.ts or internals.
+import type { Prisma, UserRole, UserStatus } from "@prisma/client";
 import { prisma } from "../../db/index.js";
 import { getSignedObjectUrl, uploadObject } from "../../shared/storage.js";
-import { NotFoundError } from "../../shared/errors.js";
+import { ConflictError, NotFoundError } from "../../shared/errors.js";
+import { logAudit } from "../../shared/auditLog.js";
+import { hashPassword } from "../auth/service.js";
 
 const PROFILE_SELECT = {
   id: true,
@@ -143,4 +146,121 @@ export async function registerDeviceToken(
     update: { userId, platform },
     create: { userId, token, platform },
   });
+}
+
+// ── Admin user management (Phase 4.2) ──────────────────────────────────────
+
+const ADMIN_USER_SELECT = {
+  id: true,
+  phone: true,
+  email: true,
+  name: true,
+  role: true,
+  status: true,
+  staffRoleId: true,
+  staffRole: { select: { id: true, name: true } },
+  createdAt: true,
+  updatedAt: true,
+} as const;
+
+export interface AdminListUsersQuery {
+  role?: UserRole;
+  status?: UserStatus;
+  search?: string;
+}
+
+/** Rider/driver rows are included too (an admin does need to look up any account), not just staff-type roles. */
+export async function adminListUsers(query: AdminListUsersQuery) {
+  return prisma.user.findMany({
+    where: {
+      role: query.role,
+      status: query.status,
+      ...(query.search
+        ? {
+            OR: [
+              { phone: { contains: query.search, mode: "insensitive" as const } },
+              { email: { contains: query.search, mode: "insensitive" as const } },
+              { name: { contains: query.search, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    },
+    select: ADMIN_USER_SELECT,
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+}
+
+export interface CreateStaffUserInput {
+  phone: string;
+  email: string;
+  password: string;
+  name: string;
+  role: "staff" | "admin" | "fleet_owner" | "dispatcher";
+  staffRoleId?: string;
+}
+
+/** Staff/admin/fleet_owner/dispatcher accounts are created here (email+password), never via the rider/driver OTP signup path. */
+export async function createStaffUser(actorId: string, input: CreateStaffUserInput) {
+  const [existingPhone, existingEmail] = await Promise.all([
+    prisma.user.findUnique({ where: { phone: input.phone } }),
+    prisma.user.findUnique({ where: { email: input.email } }),
+  ]);
+  if (existingPhone) {
+    throw new ConflictError("A user with this phone number already exists");
+  }
+  if (existingEmail) {
+    throw new ConflictError("A user with this email already exists");
+  }
+
+  const passwordHash = await hashPassword(input.password);
+  const user = await prisma.user.create({
+    data: {
+      phone: input.phone,
+      email: input.email,
+      name: input.name,
+      role: input.role,
+      passwordHash,
+      staffRoleId: input.staffRoleId,
+    },
+    select: ADMIN_USER_SELECT,
+  });
+
+  await logAudit(actorId, "user.create", "user", user.id, { role: input.role, email: input.email });
+  return user;
+}
+
+async function requireUser(userId: string) {
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) {
+    throw new NotFoundError("User not found");
+  }
+  return user;
+}
+
+export interface AdminUpdateUserInput {
+  name?: string;
+  email?: string;
+  staffRoleId?: string | null;
+}
+
+export async function adminUpdateUser(actorId: string, userId: string, data: AdminUpdateUserInput) {
+  await requireUser(userId);
+  const user = await prisma.user.update({
+    where: { id: userId },
+    data: data as Prisma.UserUpdateInput,
+    select: ADMIN_USER_SELECT,
+  });
+
+  if (data.staffRoleId !== undefined) {
+    await logAudit(actorId, "user.role_assign", "user", userId, { staffRoleId: data.staffRoleId });
+  }
+  return user;
+}
+
+export async function setUserStatus(actorId: string, userId: string, status: UserStatus) {
+  await requireUser(userId);
+  const user = await prisma.user.update({ where: { id: userId }, data: { status }, select: ADMIN_USER_SELECT });
+  await logAudit(actorId, "user.status_change", "user", userId, { status });
+  return user;
 }

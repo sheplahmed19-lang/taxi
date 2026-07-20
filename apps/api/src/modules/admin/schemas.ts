@@ -22,3 +22,19 @@ export const sendBroadcastSchema = z.object({
   message: "zoneId is required when segment is \"zone\"",
   path: ["zoneId"],
 });
+
+export const setConfigValueSchema = z.object({
+  value: z.unknown(),
+});
+
+export const roleInputSchema = z.object({
+  name: z.string().min(1).max(80),
+  description: z.string().max(500).optional(),
+  permissionIds: z.array(z.string().uuid()).default([]),
+});
+
+export const updateRoleSchema = z.object({
+  name: z.string().min(1).max(80).optional(),
+  description: z.string().max(500).optional(),
+  permissionIds: z.array(z.string().uuid()).optional(),
+});

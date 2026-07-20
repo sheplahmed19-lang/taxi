@@ -2,10 +2,12 @@ import { prisma } from "./index.js";
 
 /**
  * Phase 0.2 seed: 1 admin, 3 vehicle types, default system_config values,
- * 1 test zone polygon. Safe to re-run (upserts / existence checks).
+ * 1 test zone polygon. Phase 4.2 adds: permissions + a Super Admin StaffRole
+ * (all permissions) assigned to the seeded admin. Safe to re-run (upserts /
+ * existence checks).
  */
 async function main(): Promise<void> {
-  await prisma.user.upsert({
+  const admin = await prisma.user.upsert({
     where: { phone: "+201000000000" },
     update: {},
     create: {
@@ -101,6 +103,44 @@ async function main(): Promise<void> {
       WHERE id = ${zone.id}
     `;
   }
+
+  const permissionKeys = [
+    "drivers.manage",
+    "users.manage",
+    "vehicles.manage",
+    "config.manage",
+    "payouts.manage",
+    "promos.manage",
+    "broadcasts.send",
+    "roles.manage",
+  ];
+
+  const permissions = await Promise.all(
+    permissionKeys.map((key) =>
+      prisma.permission.upsert({ where: { key }, update: {}, create: { key } }),
+    ),
+  );
+
+  const superAdminRole = await prisma.staffRole.upsert({
+    where: { name: "Super Admin" },
+    update: {},
+    create: { name: "Super Admin", description: "Full access to all admin panel functions" },
+  });
+
+  await Promise.all(
+    permissions.map((permission) =>
+      prisma.rolePermission.upsert({
+        where: { roleId_permissionId: { roleId: superAdminRole.id, permissionId: permission.id } },
+        update: {},
+        create: { roleId: superAdminRole.id, permissionId: permission.id },
+      }),
+    ),
+  );
+
+  await prisma.user.update({
+    where: { id: admin.id },
+    data: { staffRoleId: superAdminRole.id },
+  });
 }
 
 main()

@@ -2,8 +2,9 @@
 // Other modules must only import from this file, never from routes.ts or internals.
 import { prisma } from "../../db/index.js";
 import { redis } from "../../shared/redis.js";
-import { NotFoundError } from "../../shared/errors.js";
+import { ConflictError, NotFoundError } from "../../shared/errors.js";
 import { logAudit } from "../../shared/auditLog.js";
+import { getSignedObjectUrl } from "../../shared/storage.js";
 import { geoSetKey, getDriverState } from "../drivers/service.js";
 import { enqueueBroadcast } from "../../jobs/broadcasts.js";
 import type { DriverVerificationStatus } from "@prisma/client";
@@ -60,6 +61,49 @@ export async function rejectDriver(userId: string, reason: string) {
     where: { userId },
     data: { verificationStatus: "rejected", rejectionReason: reason },
   });
+}
+
+/** Driver verification queue's document viewer: signed, time-limited URLs for whatever the driver has uploaded so far. */
+export async function getDriverDocuments(userId: string): Promise<Array<{ type: string; url: string }>> {
+  const profile = await requireDriverProfile(userId);
+  const documents = (profile.documents as Record<string, string> | null) ?? {};
+  return Promise.all(
+    Object.entries(documents).map(async ([type, key]) => ({ type, url: await getSignedObjectUrl(key) })),
+  );
+}
+
+const START_OF_TODAY = (): Date => {
+  const date = new Date();
+  date.setHours(0, 0, 0, 0);
+  return date;
+};
+
+export interface DashboardStats {
+  tripsToday: number;
+  revenueToday: number;
+  activeDrivers: number;
+  completionRate: number;
+}
+
+export async function getDashboardStats(): Promise<DashboardStats> {
+  const startOfToday = START_OF_TODAY();
+
+  const [tripsToday, completedToday, revenueAgg, activeDrivers] = await Promise.all([
+    prisma.trip.count({ where: { createdAt: { gte: startOfToday } } }),
+    prisma.trip.count({ where: { createdAt: { gte: startOfToday }, status: { in: ["completed", "paid"] } } }),
+    prisma.trip.aggregate({
+      where: { paidAt: { gte: startOfToday }, paymentStatus: "paid" },
+      _sum: { fareTotal: true },
+    }),
+    prisma.driverProfile.count({ where: { online: true } }),
+  ]);
+
+  return {
+    tripsToday,
+    revenueToday: revenueAgg._sum.fareTotal ?? 0,
+    activeDrivers,
+    completionRate: tripsToday > 0 ? Math.round((completedToday / tripsToday) * 1000) / 10 : 0,
+  };
 }
 
 /** Currently-online drivers (any vehicle type) whose live GEO position falls inside the zone's polygon. */
@@ -131,4 +175,70 @@ export async function sendBroadcast(actorId: string, input: SendBroadcastInput):
   });
 
   return { recipientCount: userIds.length };
+}
+
+// ── Roles & permissions (Phase 4.2) ─────────────────────────────────────────
+// CRUD only — this populates StaffRole/Permission/RolePermission data.
+// requirePermission() gates are not yet wired into any route (see CLAUDE.md).
+
+export async function listPermissions() {
+  return prisma.permission.findMany({ orderBy: { key: "asc" } });
+}
+
+export async function listRoles() {
+  return prisma.staffRole.findMany({
+    include: { rolePermissions: { include: { permission: true } } },
+    orderBy: { name: "asc" },
+  });
+}
+
+export interface RoleInput {
+  name: string;
+  description?: string;
+  permissionIds: string[];
+}
+
+export async function createRole(input: RoleInput) {
+  return prisma.staffRole.create({
+    data: {
+      name: input.name,
+      description: input.description,
+      rolePermissions: { create: input.permissionIds.map((permissionId) => ({ permissionId })) },
+    },
+    include: { rolePermissions: { include: { permission: true } } },
+  });
+}
+
+export async function updateRole(id: string, input: Partial<RoleInput>) {
+  const existing = await prisma.staffRole.findUnique({ where: { id } });
+  if (!existing) {
+    throw new NotFoundError("Role not found");
+  }
+
+  if (input.permissionIds) {
+    await prisma.$transaction([
+      prisma.rolePermission.deleteMany({ where: { roleId: id } }),
+      prisma.rolePermission.createMany({
+        data: input.permissionIds.map((permissionId) => ({ roleId: id, permissionId })),
+      }),
+    ]);
+  }
+
+  return prisma.staffRole.update({
+    where: { id },
+    data: { name: input.name, description: input.description },
+    include: { rolePermissions: { include: { permission: true } } },
+  });
+}
+
+export async function deleteRole(id: string): Promise<void> {
+  const existing = await prisma.staffRole.findUnique({ where: { id } });
+  if (!existing) {
+    throw new NotFoundError("Role not found");
+  }
+  const assignedCount = await prisma.user.count({ where: { staffRoleId: id } });
+  if (assignedCount > 0) {
+    throw new ConflictError("This role is still assigned to one or more users");
+  }
+  await prisma.staffRole.delete({ where: { id } });
 }

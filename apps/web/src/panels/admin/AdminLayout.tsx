@@ -1,4 +1,12 @@
-import { DashboardOutlined, CarOutlined, TeamOutlined, SettingOutlined, LogoutOutlined } from "@ant-design/icons";
+import {
+  DashboardOutlined,
+  CarOutlined,
+  TeamOutlined,
+  SettingOutlined,
+  LogoutOutlined,
+  CarryOutOutlined,
+  SafetyCertificateOutlined,
+} from "@ant-design/icons";
 import { Avatar, Dropdown, Layout, Menu, Space, Typography } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../../shared/AuthProvider";
@@ -9,7 +17,9 @@ const MENU_ITEMS = [
   { key: "/admin", icon: <DashboardOutlined />, label: "Dashboard" },
   { key: "/admin/drivers", icon: <CarOutlined />, label: "Drivers" },
   { key: "/admin/users", icon: <TeamOutlined />, label: "Users" },
+  { key: "/admin/vehicles", icon: <CarryOutOutlined />, label: "Vehicles" },
   { key: "/admin/config", icon: <SettingOutlined />, label: "Config" },
+  { key: "/admin/roles", icon: <SafetyCertificateOutlined />, label: "Roles" },
 ];
 
 export function AdminLayout() {

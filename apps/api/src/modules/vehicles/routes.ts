@@ -14,5 +14,3 @@ vehiclesRouter.get(
     res.json({ success: true, data: { types } });
   }),
 );
-
-// TODO: admin CRUD per docs/plan.md and docs/api-contract.md

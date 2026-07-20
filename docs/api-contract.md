@@ -10,7 +10,7 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              statements (list, signed download URL per statement), owe (GET), owe/pay (POST,
              settles the full outstanding amount from the driver's own wallet), scheduled
              (this driver's own accepted/arrived trips that originated as a scheduled ride)
-/vehicles    types (list, any authenticated role), CRUD (admin, not yet implemented)
+/vehicles    types (list, any authenticated role); admin CRUD lives under /admin
 /fares       estimate
 /trips       create (body may include promoCode, applied atomically with the fare estimate),
              :id, :id/accept|arrive|start|complete|cancel, :id/rate, history,
@@ -40,8 +40,22 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
 /chat        :tripId/messages (GET list, POST send — REST fallback; chat:send/chat:message
              over the /app socket is the primary path), :tripId/read (POST, marks the other
              participant's messages read)
-/admin       dashboard, drivers, users, staff, roles, zones, config,
-             trips, manual-booking, reports/*, heatmap,
+/admin       dashboard (GET — tripsToday, revenueToday, activeDrivers, completionRate),
+             drivers (list, filter by verificationStatus), drivers/:id/approve|reject(reason),
+             drivers/:id/documents (GET — signed, time-limited URL per uploaded document),
+             users (GET, filter by role/status/search; POST — creates a staff/admin/
+             fleet_owner/dispatcher account with email+password, audit-logged),
+             users/:id (PATCH — name/email/staffRoleId, audit-logged when staffRoleId changes),
+             users/:id/status (POST; body: {status: "active"|"suspended"|"banned"},
+             audit-logged), vehicle-types (GET all incl. inactive, POST create),
+             vehicle-types/:id (PATCH), vehicles (GET, filter by driverId), vehicles/:id (PATCH),
+             config (GET — every system_config row), config/:key (PATCH; body: {value} —
+             edits an existing key only, 404s on an unknown one, invalidates the 30s read
+             cache immediately), permissions (GET), roles (GET, POST create with
+             permissionIds), roles/:id (PATCH — replaces the permission set when
+             permissionIds is passed; DELETE — blocked while still assigned to a user),
+             zones, trips, manual-booking, reports/*, heatmap (all not yet implemented —
+             live ops/reporting, later Phase 4 sub-phases),
              subscriptions/plans (POST), subscriptions/plans/:id (PATCH),
              payouts (list, filter by status), payouts/:id/approve|reject|paid,
              owe (report of drivers with a positive balance), owe/:driverId/adjust
@@ -144,5 +158,37 @@ past 7 days) and uploads it via the existing S3-compatible object storage.
 Not verifiable end-to-end in this sandbox — no MinIO instance is running
 here (see CLAUDE.md's Docker note) — but `generateDriverStatement`'s upload
 step is injectable and fully covered by tests without it.
+
+Admin core (Phase 4.2): six backend areas, all requiring zero schema migrations since every
+needed table/column (`DriverProfile.documents`, `SystemConfig`, `StaffRole`/`Permission`/
+`RolePermission`, `User.staffRoleId`) already existed unused from Phase 0's schema.
+`getDashboardStats` buckets today's trips by `Trip.createdAt`, revenue by `Trip.paidAt` +
+`paymentStatus: "paid"`, active drivers by `DriverProfile.online`, and completion rate as
+`completedToday / tripsToday`. The driver document viewer reuses `shared/storage.ts:
+getSignedObjectUrl` (SigV4 presigning is a local computation, no network round-trip, so this
+is testable and E2E-verifiable even without a running MinIO — the actual image bytes are the
+disclosed-unverified part, same category as GOOGLE_MAPS_API_KEY/STRIPE_SECRET_KEY elsewhere
+in this project). Staff/admin/fleet_owner/dispatcher accounts are created with a real phone
+number as required input (`User.phone` is unique + required with no default) rather than via
+a migration to make it nullable. `setConfigValue` only edits keys the app already reads by
+name — it 404s rather than inventing a new tunable nothing consumes — and invalidates that
+key's 30s in-memory cache entry so an admin's edit is visible immediately. Roles & permissions
+is CRUD only in this phase: it populates `StaffRole`/`Permission`/`RolePermission`, but
+`requirePermission()` is not yet wired into any route gate (confirmed zero call sites before
+this phase) — wiring inconsistent enforcement across admin routes, or accidentally locking
+out an admin-role user with no assigned `StaffRole`, was judged worse than leaving enforcement
+role-based (`requireRole("admin", "staff")`) for one more phase. The seed script now also
+upserts 8 permissions and a "Super Admin" `StaffRole` with all of them attached, assigned to
+the seeded admin user. Frontend: real dashboard data + a Recharts bar chart (trips today vs.
+active drivers — revenue and completion rate stay as `Statistic` cards since their units don't
+compare on the same axis), a driver verification queue with approve/reject and a document
+viewer modal, a users page (filters, create-staff modal, edit, suspend/reactivate), a vehicles
+page (vehicle-type and vehicle tabs), an inline-editable config table (values are edited as
+raw JSON so any config shape — number, string, boolean — round-trips), and a roles page
+(checkbox permission assignment). All six backend areas are covered by new vitest files
+(`tests/admin-*.test.ts`) and were exercised live end-to-end via HTTP against a running dev
+server (temp password set/cleared on the seeded admin for the login) and via Playwright in a
+real headless-Chromium browser (dashboard chart, driver documents modal, and the create/edit/
+suspend/delete flow on every new page) — all test artifacts cleaned up afterward.
 
 Keep this file in sync with the actual Express routers under `apps/api/src/modules/*`.

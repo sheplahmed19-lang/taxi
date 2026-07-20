@@ -2,10 +2,14 @@ import { BrowserRouter, Navigate, Route, Routes } from "react-router-dom";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { AdminLayout } from "./panels/admin/AdminLayout";
 import { AdminDashboard } from "./panels/admin/AdminDashboard";
+import { DriversPage } from "./panels/admin/DriversPage";
+import { UsersPage } from "./panels/admin/UsersPage";
+import { VehiclesPage } from "./panels/admin/VehiclesPage";
+import { ConfigPage } from "./panels/admin/ConfigPage";
+import { RolesPage } from "./panels/admin/RolesPage";
 import { LoginPage } from "./shared/LoginPage";
 import { AuthProvider, useAuth } from "./shared/AuthProvider";
 import { ProtectedRoute } from "./shared/ProtectedRoute";
-import { ComingSoon } from "./shared/ComingSoon";
 import { PlaceholderPanel } from "./shared/PlaceholderPanel";
 import { panelPathForRole } from "./shared/auth";
 
@@ -30,9 +34,11 @@ export function App() {
             <Route element={<ProtectedRoute allowedRoles={["admin", "staff"]} />}>
               <Route path="/admin" element={<AdminLayout />}>
                 <Route index element={<AdminDashboard />} />
-                <Route path="drivers" element={<ComingSoon phase="Phase 4.2 — Admin core" />} />
-                <Route path="users" element={<ComingSoon phase="Phase 4.2 — Admin core" />} />
-                <Route path="config" element={<ComingSoon phase="Phase 4.2 — Admin core" />} />
+                <Route path="drivers" element={<DriversPage />} />
+                <Route path="users" element={<UsersPage />} />
+                <Route path="vehicles" element={<VehiclesPage />} />
+                <Route path="config" element={<ConfigPage />} />
+                <Route path="roles" element={<RolesPage />} />
               </Route>
             </Route>
 

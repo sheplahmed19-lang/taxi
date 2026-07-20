@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { asyncHandler } from "../../shared/asyncHandler.js";
 import { requireAuth, requireRole } from "../../middleware/auth.js";
+import { listAllConfig, setConfigValue } from "../../shared/config.js";
 import { listPayoutsQuerySchema, markPayoutPaidSchema, rejectPayoutSchema } from "../payouts/schemas.js";
 import { approvePayout, listPayouts, markPayoutPaid, rejectPayout } from "../payouts/service.js";
 import { createPromoSchema, updatePromoSchema } from "../promos/schemas.js";
@@ -8,8 +9,48 @@ import { createPromo, deletePromo, listPromos, updatePromo } from "../promos/ser
 import { createPlanSchema, updatePlanSchema } from "../subscriptions/schemas.js";
 import { createPlan, updatePlan } from "../subscriptions/service.js";
 import { adjustOwe, listOweReport } from "../wallet/service.js";
-import { adjustOweSchema, listDriversQuerySchema, rejectDriverSchema, sendBroadcastSchema } from "./schemas.js";
-import { approveDriver, listDrivers, rejectDriver, sendBroadcast } from "./service.js";
+import {
+  adminListUsersQuerySchema,
+  adminUpdateUserSchema,
+  createStaffUserSchema,
+  setUserStatusSchema,
+} from "../users/schemas.js";
+import { adminListUsers, adminUpdateUser, createStaffUser, setUserStatus } from "../users/service.js";
+import {
+  createVehicleTypeSchema,
+  listVehiclesQuerySchema,
+  updateVehicleSchema,
+  updateVehicleTypeSchema,
+} from "../vehicles/schemas.js";
+import {
+  createVehicleType,
+  listAllVehicleTypes,
+  listVehicles,
+  updateVehicle,
+  updateVehicleType,
+} from "../vehicles/service.js";
+import {
+  adjustOweSchema,
+  listDriversQuerySchema,
+  rejectDriverSchema,
+  roleInputSchema,
+  sendBroadcastSchema,
+  setConfigValueSchema,
+  updateRoleSchema,
+} from "./schemas.js";
+import {
+  approveDriver,
+  createRole,
+  deleteRole,
+  getDashboardStats,
+  getDriverDocuments,
+  listDrivers,
+  listPermissions,
+  listRoles,
+  rejectDriver,
+  sendBroadcast,
+  updateRole,
+} from "./service.js";
 
 export const adminRouter = Router();
 
@@ -151,5 +192,160 @@ adminRouter.post(
     const data = sendBroadcastSchema.parse(req.body);
     const result = await sendBroadcast(req.user!.id, data);
     res.status(201).json({ success: true, data: result });
+  }),
+);
+
+adminRouter.get(
+  "/dashboard",
+  asyncHandler(async (_req, res) => {
+    const stats = await getDashboardStats();
+    res.json({ success: true, data: stats });
+  }),
+);
+
+adminRouter.get(
+  "/drivers/:id/documents",
+  asyncHandler(async (req, res) => {
+    const documents = await getDriverDocuments(req.params.id as string);
+    res.json({ success: true, data: { documents } });
+  }),
+);
+
+adminRouter.get(
+  "/users",
+  asyncHandler(async (req, res) => {
+    const query = adminListUsersQuerySchema.parse(req.query);
+    const users = await adminListUsers(query);
+    res.json({ success: true, data: { users } });
+  }),
+);
+
+adminRouter.post(
+  "/users",
+  asyncHandler(async (req, res) => {
+    const data = createStaffUserSchema.parse(req.body);
+    const user = await createStaffUser(req.user!.id, data);
+    res.status(201).json({ success: true, data: user });
+  }),
+);
+
+adminRouter.patch(
+  "/users/:id",
+  asyncHandler(async (req, res) => {
+    const data = adminUpdateUserSchema.parse(req.body);
+    const user = await adminUpdateUser(req.user!.id, req.params.id as string, data);
+    res.json({ success: true, data: user });
+  }),
+);
+
+adminRouter.post(
+  "/users/:id/status",
+  asyncHandler(async (req, res) => {
+    const { status } = setUserStatusSchema.parse(req.body);
+    const user = await setUserStatus(req.user!.id, req.params.id as string, status);
+    res.json({ success: true, data: user });
+  }),
+);
+
+adminRouter.get(
+  "/vehicle-types",
+  asyncHandler(async (_req, res) => {
+    const types = await listAllVehicleTypes();
+    res.json({ success: true, data: { types } });
+  }),
+);
+
+adminRouter.post(
+  "/vehicle-types",
+  asyncHandler(async (req, res) => {
+    const data = createVehicleTypeSchema.parse(req.body);
+    const type = await createVehicleType(data);
+    res.status(201).json({ success: true, data: type });
+  }),
+);
+
+adminRouter.patch(
+  "/vehicle-types/:id",
+  asyncHandler(async (req, res) => {
+    const data = updateVehicleTypeSchema.parse(req.body);
+    const type = await updateVehicleType(req.params.id as string, data);
+    res.json({ success: true, data: type });
+  }),
+);
+
+adminRouter.get(
+  "/vehicles",
+  asyncHandler(async (req, res) => {
+    const query = listVehiclesQuerySchema.parse(req.query);
+    const vehicles = await listVehicles(query);
+    res.json({ success: true, data: { vehicles } });
+  }),
+);
+
+adminRouter.patch(
+  "/vehicles/:id",
+  asyncHandler(async (req, res) => {
+    const data = updateVehicleSchema.parse(req.body);
+    const vehicle = await updateVehicle(req.params.id as string, data);
+    res.json({ success: true, data: vehicle });
+  }),
+);
+
+adminRouter.get(
+  "/config",
+  asyncHandler(async (_req, res) => {
+    const config = await listAllConfig();
+    res.json({ success: true, data: { config } });
+  }),
+);
+
+adminRouter.patch(
+  "/config/:key",
+  asyncHandler(async (req, res) => {
+    const { value } = setConfigValueSchema.parse(req.body);
+    const row = await setConfigValue(req.params.key as string, value);
+    res.json({ success: true, data: row });
+  }),
+);
+
+adminRouter.get(
+  "/permissions",
+  asyncHandler(async (_req, res) => {
+    const permissions = await listPermissions();
+    res.json({ success: true, data: { permissions } });
+  }),
+);
+
+adminRouter.get(
+  "/roles",
+  asyncHandler(async (_req, res) => {
+    const roles = await listRoles();
+    res.json({ success: true, data: { roles } });
+  }),
+);
+
+adminRouter.post(
+  "/roles",
+  asyncHandler(async (req, res) => {
+    const data = roleInputSchema.parse(req.body);
+    const role = await createRole(data);
+    res.status(201).json({ success: true, data: role });
+  }),
+);
+
+adminRouter.patch(
+  "/roles/:id",
+  asyncHandler(async (req, res) => {
+    const data = updateRoleSchema.parse(req.body);
+    const role = await updateRole(req.params.id as string, data);
+    res.json({ success: true, data: role });
+  }),
+);
+
+adminRouter.delete(
+  "/roles/:id",
+  asyncHandler(async (req, res) => {
+    await deleteRole(req.params.id as string);
+    res.json({ success: true, data: { deleted: true } });
   }),
 );
