@@ -20,6 +20,11 @@ import { BroadcastComposerPage } from "./panels/dispatcher/BroadcastComposerPage
 import { ZonesPage } from "./panels/dispatcher/ZonesPage";
 import { CompanyLayout } from "./panels/company/CompanyLayout";
 import { CompanyFleetPage } from "./panels/company/CompanyFleetPage";
+import { AccountLayout } from "./panels/account/AccountLayout";
+import { RideHistoryPage } from "./panels/account/RideHistoryPage";
+import { TripReceiptPage } from "./panels/account/TripReceiptPage";
+import { WalletPage } from "./panels/account/WalletPage";
+import { ProfilePage } from "./panels/account/ProfilePage";
 import { LoginPage } from "./shared/LoginPage";
 import { AuthProvider, useAuth } from "./shared/AuthProvider";
 import { ProtectedRoute } from "./shared/ProtectedRoute";
@@ -75,6 +80,24 @@ export function App() {
                 <Route path="reports" element={<ReportsPage />} />
                 <Route path="broadcast" element={<BroadcastComposerPage />} />
                 <Route path="zones" element={<ZonesPage />} />
+              </Route>
+            </Route>
+
+            <Route element={<ProtectedRoute allowedRoles={["rider"]} />}>
+              <Route path="/rider" element={<AccountLayout title="Rider" basePath="/rider" />}>
+                <Route index element={<RideHistoryPage />} />
+                <Route path="trips/:id" element={<TripReceiptPage />} />
+                <Route path="wallet" element={<WalletPage />} />
+                <Route path="profile" element={<ProfilePage />} />
+              </Route>
+            </Route>
+
+            <Route element={<ProtectedRoute allowedRoles={["driver"]} />}>
+              <Route path="/driver" element={<AccountLayout title="Driver" basePath="/driver" />}>
+                <Route index element={<RideHistoryPage />} />
+                <Route path="trips/:id" element={<TripReceiptPage />} />
+                <Route path="wallet" element={<WalletPage />} />
+                <Route path="profile" element={<ProfilePage />} />
               </Route>
             </Route>
 

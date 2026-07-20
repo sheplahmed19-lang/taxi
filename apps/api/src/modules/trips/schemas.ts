@@ -32,6 +32,10 @@ export const trackTripQuerySchema = z.object({
   token: z.string().min(1),
 });
 
+export const myTripsQuerySchema = z.object({
+  cursor: z.string().uuid().optional(),
+});
+
 // ── Dispatcher panel: trip management (Phase 4.4) ───────────────────────────
 
 export const adminListTripsQuerySchema = z.object({

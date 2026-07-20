@@ -267,6 +267,23 @@ export async function getTripForParticipant(tripId: string, userId: string) {
   return { ...trip, pickup, drop };
 }
 
+const MY_TRIPS_PAGE_SIZE = 20;
+
+/** Ride history (Phase 4.5's rider/driver web panels): cursor-paginated, newest first — same convention as wallet/service.ts:listTransactions. */
+export async function listMyTrips(userId: string, cursor?: string) {
+  return prisma.trip.findMany({
+    where: { OR: [{ riderId: userId }, { driverId: userId }] },
+    include: {
+      vehicleType: { select: { name: true } },
+      rider: { select: { id: true, name: true, phone: true } },
+      driver: { select: { id: true, name: true, phone: true } },
+    },
+    orderBy: { createdAt: "desc" },
+    take: MY_TRIPS_PAGE_SIZE,
+    ...(cursor ? { cursor: { id: cursor }, skip: 1 } : {}),
+  });
+}
+
 // ── Live location relay + batched trip_locations persistence ──────────────
 // "Batch-insert": pings are buffered in-process and flushed periodically
 // rather than hitting the DB on every 3-5s socket ping. TripLocation.point

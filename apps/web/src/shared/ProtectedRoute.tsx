@@ -1,9 +1,9 @@
 import { Navigate, Outlet } from "react-router-dom";
 import { useAuth } from "./AuthProvider";
-import { panelPathForRole, type StaffRole } from "./auth";
+import { panelPathForRole, type UserRole } from "./auth";
 
 interface ProtectedRouteProps {
-  allowedRoles: StaffRole[];
+  allowedRoles: UserRole[];
 }
 
 /** Gates a route subtree: bounces unauthenticated users to /login, and authenticated-but-wrong-role users to their own panel. */

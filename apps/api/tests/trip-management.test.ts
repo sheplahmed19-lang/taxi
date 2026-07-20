@@ -15,6 +15,11 @@ let vehicleTypeId: string;
 const userIds: string[] = [];
 const vehicleTypeIds: string[] = [];
 const tripIds: string[] = [];
+const suffix = Date.now();
+
+function phoneFor(prefix: string): string {
+  return `+201${prefix}${suffix}`.slice(0, 15);
+}
 
 async function makeRider(phone: string): Promise<string> {
   const user = await prisma.user.upsert({ where: { phone }, update: {}, create: { phone, role: "rider" } });
@@ -85,15 +90,16 @@ describe("trip management (dispatcher panel)", () => {
 
   describe("adminListTrips", () => {
     it("filters by status and search", async () => {
-      const rider = await makeRider("+201000099901");
-      const driver = await makeOnlineDriver("+201000099911", "TRIPMGMT-001", 30.0505, 31.2305);
+      const riderPhone = phoneFor("099901");
+      const rider = await makeRider(riderPhone);
+      const driver = await makeOnlineDriver(phoneFor("099911"), "TRIPMGMT-001", 30.0505, 31.2305);
       const trip = await makeAcceptedTrip(rider, driver);
       tripIds.push(trip.id);
 
       const byStatus = await adminListTrips({ status: "accepted" });
       expect(byStatus.some((t) => t.id === trip.id)).toBe(true);
 
-      const bySearch = await adminListTrips({ search: "+201000099901" });
+      const bySearch = await adminListTrips({ search: riderPhone });
       expect(bySearch.some((t) => t.id === trip.id)).toBe(true);
 
       const wrongStatus = await adminListTrips({ status: "paid" });
@@ -103,7 +109,7 @@ describe("trip management (dispatcher panel)", () => {
 
   describe("cancelTripAsAdmin", () => {
     it("cancels a searching trip, no fee, audit-logged", async () => {
-      const rider = await makeRider("+201000099902");
+      const rider = await makeRider(phoneFor("099902"));
       const trip = await requestTrip(rider, { pickup, drop, vehicleTypeId, paymentMethod: "cash" });
       tripIds.push(trip.id);
       expect(trip.status).toBe("no_drivers_found"); // no online driver for this fresh vehicle type yet
@@ -119,8 +125,8 @@ describe("trip management (dispatcher panel)", () => {
     });
 
     it("cancelling an accepted trip releases the driver back to the GEO pool, no fee charged", async () => {
-      const rider = await makeRider("+201000099903");
-      const driver = await makeOnlineDriver("+201000099912", "TRIPMGMT-002", 30.0505, 31.2305);
+      const rider = await makeRider(phoneFor("099903"));
+      const driver = await makeOnlineDriver(phoneFor("099912"), "TRIPMGMT-002", 30.0505, 31.2305);
       const trip = await makeAcceptedTrip(rider, driver);
       tripIds.push(trip.id);
 
@@ -133,8 +139,8 @@ describe("trip management (dispatcher panel)", () => {
     });
 
     it("rejects cancelling a trip already in progress", async () => {
-      const rider = await makeRider("+201000099904");
-      const driver = await makeOnlineDriver("+201000099913", "TRIPMGMT-003", 30.0505, 31.2305);
+      const rider = await makeRider(phoneFor("099904"));
+      const driver = await makeOnlineDriver(phoneFor("099913"), "TRIPMGMT-003", 30.0505, 31.2305);
       const trip = await makeAcceptedTrip(rider, driver);
       tripIds.push(trip.id);
       await arriveTrip(trip.id, driver);
@@ -151,9 +157,9 @@ describe("trip management (dispatcher panel)", () => {
 
   describe("reassignTripDriver", () => {
     it("swaps the driver on an accepted trip, releasing the old one and locking the new one", async () => {
-      const rider = await makeRider("+201000099905");
-      const oldDriver = await makeOnlineDriver("+201000099914", "TRIPMGMT-004", 30.0505, 31.2305);
-      const newDriver = await makeOnlineDriver("+201000099915", "TRIPMGMT-005", 30.0510, 31.2310);
+      const rider = await makeRider(phoneFor("099905"));
+      const oldDriver = await makeOnlineDriver(phoneFor("099914"), "TRIPMGMT-004", 30.0505, 31.2305);
+      const newDriver = await makeOnlineDriver(phoneFor("099915"), "TRIPMGMT-005", 30.0510, 31.2310);
       const trip = await makeAcceptedTrip(rider, oldDriver);
       tripIds.push(trip.id);
 
@@ -171,10 +177,10 @@ describe("trip management (dispatcher panel)", () => {
     });
 
     it("rejects reassigning to a driver who isn't free (already on another trip)", async () => {
-      const rider1 = await makeRider("+201000099906");
-      const rider2 = await makeRider("+201000099907");
-      const busyDriver = await makeOnlineDriver("+201000099916", "TRIPMGMT-006", 30.0505, 31.2305);
-      const targetDriverOriginal = await makeOnlineDriver("+201000099917", "TRIPMGMT-007", 30.0510, 31.2310);
+      const rider1 = await makeRider(phoneFor("099906"));
+      const rider2 = await makeRider(phoneFor("099907"));
+      const busyDriver = await makeOnlineDriver(phoneFor("099916"), "TRIPMGMT-006", 30.0505, 31.2305);
+      const targetDriverOriginal = await makeOnlineDriver(phoneFor("099917"), "TRIPMGMT-007", 30.0510, 31.2310);
 
       const trip1 = await makeAcceptedTrip(rider1, busyDriver); // busyDriver now off the GEO pool
       tripIds.push(trip1.id);
@@ -185,8 +191,8 @@ describe("trip management (dispatcher panel)", () => {
     });
 
     it("rejects reassigning a trip that hasn't been accepted yet", async () => {
-      const rider = await makeRider("+201000099908");
-      const driver = await makeOnlineDriver("+201000099918", "TRIPMGMT-008", 30.0505, 31.2305);
+      const rider = await makeRider(phoneFor("099908"));
+      const driver = await makeOnlineDriver(phoneFor("099918"), "TRIPMGMT-008", 30.0505, 31.2305);
       const trip = await requestTrip(rider, { pickup, drop, vehicleTypeId, paymentMethod: "cash" });
       tripIds.push(trip.id);
 
@@ -194,7 +200,7 @@ describe("trip management (dispatcher panel)", () => {
     });
 
     it("404s for an unknown trip", async () => {
-      const driver = await makeOnlineDriver("+201000099919", "TRIPMGMT-009", 30.0505, 31.2305);
+      const driver = await makeOnlineDriver(phoneFor("099919"), "TRIPMGMT-009", 30.0505, 31.2305);
       await expect(reassignTripDriver("00000000-0000-0000-0000-000000000000", driver, "staff-1")).rejects.toThrow(NotFoundError);
     });
   });

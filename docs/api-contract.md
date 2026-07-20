@@ -29,7 +29,9 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              JSON; admin/staff/dispatcher only
 /fares       estimate
 /trips       create (body may include promoCode, applied atomically with the fare estimate),
-             :id, :id/accept|arrive|start|complete|cancel, :id/rate, history,
+             list mine (GET / — cursor-paginated ride history, rider or driver side, newest
+             first; Phase 4.5's rider/driver web panels), :id, :id/accept|arrive|start|
+             complete|cancel, :id/rate,
              :id/share (POST, participant-only — mints a tokenized tracking link),
              :id/track (GET, public — no auth; query: {token})
 /scheduled   create (rider; body: {pickup, drop, vehicleTypeId, paymentMethod, scheduledFor} —
@@ -340,5 +342,37 @@ Playwright in a real browser across both panels and three logged-in roles — 15
 passed, including the full manual-booking → trip-management → cancel flow and the zone editor's
 draw toolbar rendering (same disclosed blank-tile-imagery limitation as Phase 4.3 — no outbound
 network access to any tile CDN in this sandbox).
+
+Rider & driver web panels (Phase 4.5): deliberately thin, per the plan — ride history, a
+receipt view, wallet/transactions, and profile, reusing existing endpoints wherever possible.
+The only backend addition was `GET /trips` (cursor-paginated `listMyTrips`, same convention as
+`wallet/service.ts:listTransactions`) — everything else (`GET /trips/:id` for receipts,
+`GET /wallet/balance`+`/transactions`, `GET`/`PATCH /users/me` for profile) already worked for
+any authenticated role with zero changes. The bigger gap was on the frontend: apps/web had no
+way for a rider or driver to authenticate at all — `AuthProvider`/`StaffUser`/`panelPathForRole`
+only knew about the four staff-ish roles (admin/staff/fleet_owner/dispatcher) via email+password.
+`shared/auth.ts`'s `StaffRole` was widened to a `UserRole` union including `rider`/`driver`
+(with a nullable `phone` alongside the existing nullable `email`, since the two login paths
+return different fields), `AuthProvider` gained `requestOtp`/`verifyOtp` calling the existing
+`POST /auth/otp/request`/`verify`, and `LoginPage` became tabbed — the original email+password
+form under "Staff", a new phone+OTP form with a rider/driver segmented control under
+"Rider / Driver". One real bug caught by E2E testing before it shipped: the first OTP-entry cut
+used antd's `Input.OTP` with a hardcoded `length={6}`, but the backend's OTP length is itself a
+`system_config` value (`otp_length`, default 4, per CLAUDE.md rule 10) — `Input.OTP` only fires
+its `onChange` once every box is filled, so a 4-digit code could never fill 6 boxes and the
+verify button would stay permanently disabled. Replaced with a plain numeric `Input` (4-8 digits,
+matching the backend's own `otp` schema bounds) that doesn't assume a fixed length. Both new
+panels are mounted twice — `/rider/*` and `/driver/*` — over one shared `panels/account/`
+component set (`AccountLayout`, parameterized by `title`+`basePath`; `RideHistoryPage`,
+`TripReceiptPage`, `WalletPage`, `ProfilePage`), the same reuse pattern Phase 4.4 used for
+`LiveOpsPage`'s `basePath` prop, so the four pages are written once and don't know which role is
+viewing them. Verified via Playwright in a real browser end-to-end against seeded rider/driver
+accounts with a real completed cash trip: OTP login landing each role on its own panel, ride
+history listing the trip, the receipt page rendering the full fare breakdown, the wallet page
+showing the settled transaction, profile showing the phone number, a rider hitting `/admin`
+being bounced back to `/rider` (cross-role access still denied), and logout clearing the session
+— 13/13 checks passed, plus a regression check that the existing staff email+password tab still
+renders and rejects bad credentials correctly. Full backend suite 289/289 passing 3x clean
+(one new test file, `my-trips.test.ts`). **Phase 4 — Panels & Analytics complete (4.1–4.5).**
 
 Keep this file in sync with the actual Express routers under `apps/api/src/modules/*`.

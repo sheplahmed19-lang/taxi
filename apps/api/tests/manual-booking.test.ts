@@ -13,6 +13,11 @@ let vehicleTypeId: string;
 const userIds: string[] = [];
 const vehicleTypeIds: string[] = [];
 const tripIds: string[] = [];
+const suffix = Date.now();
+
+function phoneFor(prefix: string): string {
+  return `+201${prefix}${suffix}`.slice(0, 15);
+}
 
 async function makeOnlineDriver(phone: string, plate: string, lat: number, lng: number): Promise<string> {
   const user = await prisma.user.upsert({
@@ -69,8 +74,8 @@ describe("manual booking (dispatcher panel)", () => {
   });
 
   it("finds-or-creates a rider by phone and dispatches normally without a chosen driver", async () => {
-    await makeOnlineDriver("+201000077701", "MANBOOK-001", 30.0505, 31.2305);
-    const phone = "+201000088801";
+    await makeOnlineDriver(phoneFor("77701"), "MANBOOK-001", 30.0505, 31.2305);
+    const phone = phoneFor("88801");
 
     // No driverId — this runs the same nearest-candidate cascade a rider's
     // own POST /trips does, which offers to the driver over their socket and
@@ -101,10 +106,10 @@ describe("manual booking (dispatcher panel)", () => {
   });
 
   it("reuses an existing rider account for a phone that's already registered", async () => {
-    const phone = "+201000088802";
+    const phone = phoneFor("88802");
     const existing = await prisma.user.create({ data: { phone, role: "rider", name: "Existing Rider" } });
     userIds.push(existing.id);
-    await makeOnlineDriver("+201000077702", "MANBOOK-002", 30.0505, 31.2305);
+    await makeOnlineDriver(phoneFor("77702"), "MANBOOK-002", 30.0505, 31.2305);
 
     const trip = await createManualBooking("staff-1", { phone, pickup, drop, vehicleTypeId, paymentMethod: "cash" });
     tripIds.push(trip.id);
@@ -115,11 +120,12 @@ describe("manual booking (dispatcher panel)", () => {
   });
 
   it("assigns a specific chosen driver instead of the nearest-candidate cascade", async () => {
-    const nearer = await makeOnlineDriver("+201000077703", "MANBOOK-003", 30.0501, 31.2301);
-    const chosen = await makeOnlineDriver("+201000077704", "MANBOOK-004", 30.09, 31.29); // farther away
+    const nearer = await makeOnlineDriver(phoneFor("77703"), "MANBOOK-003", 30.0501, 31.2301);
+    const chosen = await makeOnlineDriver(phoneFor("77704"), "MANBOOK-004", 30.09, 31.29); // farther away
+    const phone = phoneFor("88803");
 
     const trip = await createManualBooking("staff-1", {
-      phone: "+201000088803",
+      phone,
       pickup,
       drop,
       vehicleTypeId,
@@ -131,15 +137,17 @@ describe("manual booking (dispatcher panel)", () => {
     expect(trip.driverId).toBe(chosen);
     expect(trip.driverId).not.toBe(nearer);
 
-    const rider = await prisma.user.findFirst({ where: { phone: "+201000088803" } });
+    const rider = await prisma.user.findFirst({ where: { phone } });
     if (rider) userIds.push(rider.id);
   });
 
   it("assignDriverToTrip rejects a driver who's already busy with another trip", async () => {
-    const driverA = await makeOnlineDriver("+201000077705", "MANBOOK-005", 30.0505, 31.2305);
+    const driverA = await makeOnlineDriver(phoneFor("77705"), "MANBOOK-005", 30.0505, 31.2305);
+    const phoneA = phoneFor("88804");
+    const phoneB = phoneFor("88805");
 
     const trip1 = await createManualBooking("staff-1", {
-      phone: "+201000088804",
+      phone: phoneA,
       pickup,
       drop,
       vehicleTypeId,
@@ -150,26 +158,27 @@ describe("manual booking (dispatcher panel)", () => {
 
     // driverA is now busy (accepted trip1, pulled from the GEO pool) — a second
     // manual booking trying to force-assign them should fail cleanly.
-    const trip2 = await createManualBooking("staff-1", { phone: "+201000088805", pickup, drop, vehicleTypeId, paymentMethod: "cash" });
+    const trip2 = await createManualBooking("staff-1", { phone: phoneB, pickup, drop, vehicleTypeId, paymentMethod: "cash" });
     tripIds.push(trip2.id);
 
     await expect(assignDriverToTrip(trip2.id, driverA)).rejects.toThrow(ConflictError);
 
-    const riderA = await prisma.user.findFirst({ where: { phone: "+201000088804" } });
-    const riderB = await prisma.user.findFirst({ where: { phone: "+201000088805" } });
+    const riderA = await prisma.user.findFirst({ where: { phone: phoneA } });
+    const riderB = await prisma.user.findFirst({ where: { phone: phoneB } });
     if (riderA) userIds.push(riderA.id);
     if (riderB) userIds.push(riderB.id);
   });
 
   it("rejects assigning an offline driver", async () => {
-    const offline = await makeOnlineDriver("+201000077706", "MANBOOK-006", 30.0505, 31.2305);
+    const offline = await makeOnlineDriver(phoneFor("77706"), "MANBOOK-006", 30.0505, 31.2305);
     await setAvailability(offline, false);
+    const phone = phoneFor("88806");
 
     await expect(
-      createManualBooking("staff-1", { phone: "+201000088806", pickup, drop, vehicleTypeId, paymentMethod: "cash", driverId: offline }),
+      createManualBooking("staff-1", { phone, pickup, drop, vehicleTypeId, paymentMethod: "cash", driverId: offline }),
     ).rejects.toThrow(ConflictError);
 
-    const rider = await prisma.user.findFirst({ where: { phone: "+201000088806" } });
+    const rider = await prisma.user.findFirst({ where: { phone } });
     if (rider) userIds.push(rider.id);
     // The trip was created (rider account exists) but assignment failed and threw —
     // no trip row to clean up since createTripRecord happens inside requestTrip

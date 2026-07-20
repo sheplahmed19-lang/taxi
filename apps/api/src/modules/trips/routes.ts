@@ -1,7 +1,14 @@
 import { Router } from "express";
 import { asyncHandler } from "../../shared/asyncHandler.js";
 import { requireAuth, requireRole } from "../../middleware/auth.js";
-import { cancelTripSchema, createTripSchema, rateTripSchema, startTripSchema, trackTripQuerySchema } from "./schemas.js";
+import {
+  cancelTripSchema,
+  createTripSchema,
+  myTripsQuerySchema,
+  rateTripSchema,
+  startTripSchema,
+  trackTripQuerySchema,
+} from "./schemas.js";
 import {
   arriveTrip,
   cancelTrip,
@@ -9,6 +16,7 @@ import {
   createShareLink,
   getTripForParticipant,
   getTripForPublicTracking,
+  listMyTrips,
   rateTrip,
   startTrip,
 } from "./service.js";
@@ -36,6 +44,15 @@ tripsRouter.post(
     const input = createTripSchema.parse(req.body);
     const trip = await requestTrip(req.user!.id, input);
     res.status(201).json({ success: true, data: trip });
+  }),
+);
+
+tripsRouter.get(
+  "/",
+  asyncHandler(async (req, res) => {
+    const { cursor } = myTripsQuerySchema.parse(req.query);
+    const trips = await listMyTrips(req.user!.id, cursor);
+    res.json({ success: true, data: { trips } });
   }),
 );
 

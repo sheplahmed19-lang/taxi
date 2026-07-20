@@ -1,9 +1,10 @@
-export type StaffRole = "admin" | "staff" | "fleet_owner" | "dispatcher";
+export type UserRole = "admin" | "staff" | "fleet_owner" | "dispatcher" | "rider" | "driver";
 
 export interface StaffUser {
   id: string;
   email: string | null;
-  role: StaffRole;
+  phone: string | null;
+  role: UserRole;
 }
 
 export interface Session {
@@ -32,13 +33,17 @@ export function clearSession(): void {
   localStorage.removeItem(STORAGE_KEY);
 }
 
-/** Where a given staff role lands after login — panels beyond /admin are placeholders until Phase 4.4. */
-export function panelPathForRole(role: StaffRole): string {
+/** Where a given user role lands after login. */
+export function panelPathForRole(role: UserRole): string {
   switch (role) {
     case "fleet_owner":
       return "/company";
     case "dispatcher":
       return "/dispatcher";
+    case "rider":
+      return "/rider";
+    case "driver":
+      return "/driver";
     default:
       return "/admin";
   }

@@ -19,6 +19,7 @@ let vehicleTypeId: string;
 const userIds: string[] = [];
 const vehicleTypeIds: string[] = [];
 const tripIds: string[] = [];
+const suffix = Date.now();
 
 async function makeRider(phone: string): Promise<string> {
   const user = await prisma.user.upsert({ where: { phone }, update: {}, create: { phone, role: "rider" } });
@@ -84,8 +85,8 @@ describe("financial & operations reports", () => {
   });
 
   it("getFinancialReport aggregates gross fare, commission, and driver earnings for paid trips in range", async () => {
-    const rider = await makeRider("+201000055501");
-    const driver = await makeOnlineDriver("+201000055511", "REPORT-001", 30.0505, 31.2305);
+    const rider = await makeRider(`+2010007${suffix}`.slice(0, 15));
+    const driver = await makeOnlineDriver(`+2010008${suffix}`.slice(0, 15), "REPORT-001", 30.0505, 31.2305);
     const completed = await completeCashTrip(rider, driver);
     tripIds.push(completed.id);
     expect(completed.status).toBe("paid");
@@ -116,8 +117,8 @@ describe("financial & operations reports", () => {
   });
 
   it("getOperationsReport breaks trips down by status with a completion rate and averages", async () => {
-    const rider = await makeRider("+201000055502");
-    const driver = await makeOnlineDriver("+201000055512", "REPORT-002", 30.0505, 31.2305);
+    const rider = await makeRider(`+2010009${suffix}`.slice(0, 15));
+    const driver = await makeOnlineDriver(`+2010010${suffix}`.slice(0, 15), "REPORT-002", 30.0505, 31.2305);
     const completed = await completeCashTrip(rider, driver);
     tripIds.push(completed.id);
 

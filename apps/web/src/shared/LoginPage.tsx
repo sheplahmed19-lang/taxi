@@ -1,51 +1,161 @@
 import { useState } from "react";
-import { Alert, Button, Card, Form, Input, Typography } from "antd";
+import { Alert, Button, Card, Form, Input, Segmented, Tabs, Typography } from "antd";
 import { isAxiosError } from "axios";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthProvider";
 import { panelPathForRole } from "./auth";
 
-interface LoginFormValues {
+interface StaffLoginValues {
   email: string;
   password: string;
 }
 
-export function LoginPage() {
+function errorMessage(err: unknown, fallback: string): string {
+  return (isAxiosError(err) ? (err.response?.data?.error?.message as string | undefined) : undefined) ?? fallback;
+}
+
+function StaffLoginForm() {
   const { login } = useAuth();
   const navigate = useNavigate();
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
-  async function handleSubmit(values: LoginFormValues) {
+  async function handleSubmit(values: StaffLoginValues) {
     setError(null);
     setSubmitting(true);
     try {
       const user = await login(values.email, values.password);
       navigate(panelPathForRole(user.role), { replace: true });
     } catch (err) {
-      const message = isAxiosError(err) ? (err.response?.data?.error?.message as string | undefined) : undefined;
-      setError(message ?? "Sign in failed — check your email and password.");
+      setError(errorMessage(err, "Sign in failed — check your email and password."));
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
-      <Card style={{ width: 360 }}>
-        <Typography.Title level={4}>Ride Platform — Staff Login</Typography.Title>
-        {error && <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} />}
-        <Form<LoginFormValues> layout="vertical" onFinish={handleSubmit} disabled={submitting}>
-          <Form.Item label="Email" name="email" rules={[{ required: true, type: "email" }]}>
-            <Input placeholder="you@company.com" autoComplete="username" />
+    <>
+      {error && <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} />}
+      <Form<StaffLoginValues> layout="vertical" onFinish={handleSubmit} disabled={submitting}>
+        <Form.Item label="Email" name="email" rules={[{ required: true, type: "email" }]}>
+          <Input placeholder="you@company.com" autoComplete="username" />
+        </Form.Item>
+        <Form.Item label="Password" name="password" rules={[{ required: true }]}>
+          <Input.Password autoComplete="current-password" />
+        </Form.Item>
+        <Button type="primary" htmlType="submit" block loading={submitting}>
+          Sign in
+        </Button>
+      </Form>
+    </>
+  );
+}
+
+function RiderDriverLoginForm() {
+  const { requestOtp, verifyOtp } = useAuth();
+  const navigate = useNavigate();
+  const [role, setRole] = useState<"rider" | "driver">("rider");
+  const [phone, setPhone] = useState("");
+  const [otp, setOtp] = useState("");
+  const [stage, setStage] = useState<"phone" | "otp">("phone");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleRequestOtp() {
+    setError(null);
+    setSubmitting(true);
+    try {
+      await requestOtp(phone);
+      setStage("otp");
+    } catch (err) {
+      setError(errorMessage(err, "Couldn't send an OTP to that number."));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  async function handleVerifyOtp() {
+    setError(null);
+    setSubmitting(true);
+    try {
+      const user = await verifyOtp(phone, otp, role);
+      navigate(panelPathForRole(user.role), { replace: true });
+    } catch (err) {
+      setError(errorMessage(err, "Invalid or expired code."));
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <>
+      {error && <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} />}
+      {stage === "phone" ? (
+        <Form layout="vertical" onFinish={handleRequestOtp} disabled={submitting}>
+          <Form.Item label="I am a">
+            <Segmented
+              block
+              value={role}
+              onChange={(v) => setRole(v as "rider" | "driver")}
+              options={[
+                { label: "Rider", value: "rider" },
+                { label: "Driver", value: "driver" },
+              ]}
+            />
           </Form.Item>
-          <Form.Item label="Password" name="password" rules={[{ required: true }]}>
-            <Input.Password autoComplete="current-password" />
+          <Form.Item label="Phone number" required>
+            <Input
+              placeholder="+201000000000"
+              value={phone}
+              onChange={(e) => setPhone(e.target.value)}
+              autoComplete="tel"
+            />
           </Form.Item>
-          <Button type="primary" htmlType="submit" block loading={submitting}>
-            Sign in
+          <Button type="primary" htmlType="submit" block loading={submitting} disabled={!phone}>
+            Send code
           </Button>
         </Form>
+      ) : (
+        <Form layout="vertical" onFinish={handleVerifyOtp} disabled={submitting}>
+          <Typography.Paragraph type="secondary">Enter the code sent to {phone}.</Typography.Paragraph>
+          {/* Plain input, not Input.OTP: the backend's OTP length is a configurable
+              system_config value (otp_length, default 4, CLAUDE.md rule 10) — a
+              fixed-length OTP box grid would never fire its onChange (and so never
+              enable the submit button) unless it happened to match exactly. */}
+          <Form.Item label="Code" required>
+            <Input
+              value={otp}
+              onChange={(e) => setOtp(e.target.value.replace(/\D/g, ""))}
+              maxLength={8}
+              inputMode="numeric"
+              autoFocus
+              placeholder="1234"
+            />
+          </Form.Item>
+          <Button type="primary" htmlType="submit" block loading={submitting} disabled={otp.length < 4}>
+            Verify &amp; sign in
+          </Button>
+          <Button type="link" block onClick={() => setStage("phone")} disabled={submitting}>
+            Use a different number
+          </Button>
+        </Form>
+      )}
+    </>
+  );
+}
+
+export function LoginPage() {
+  return (
+    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
+      <Card style={{ width: 380 }}>
+        <Typography.Title level={4}>Ride Platform</Typography.Title>
+        <Tabs
+          defaultActiveKey="rider-driver"
+          items={[
+            { key: "rider-driver", label: "Rider / Driver", children: <RiderDriverLoginForm /> },
+            { key: "staff", label: "Staff", children: <StaffLoginForm /> },
+          ]}
+        />
       </Card>
     </div>
   );
