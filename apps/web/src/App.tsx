@@ -7,6 +7,8 @@ import { UsersPage } from "./panels/admin/UsersPage";
 import { VehiclesPage } from "./panels/admin/VehiclesPage";
 import { ConfigPage } from "./panels/admin/ConfigPage";
 import { RolesPage } from "./panels/admin/RolesPage";
+import { LiveOpsPage } from "./panels/admin/LiveOpsPage";
+import { TripDetailPage } from "./panels/admin/TripDetailPage";
 import { LoginPage } from "./shared/LoginPage";
 import { AuthProvider, useAuth } from "./shared/AuthProvider";
 import { ProtectedRoute } from "./shared/ProtectedRoute";
@@ -39,6 +41,8 @@ export function App() {
                 <Route path="vehicles" element={<VehiclesPage />} />
                 <Route path="config" element={<ConfigPage />} />
                 <Route path="roles" element={<RolesPage />} />
+                <Route path="live" element={<LiveOpsPage />} />
+                <Route path="trips/:id" element={<TripDetailPage />} />
               </Route>
             </Route>
 

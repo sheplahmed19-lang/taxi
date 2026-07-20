@@ -6,6 +6,7 @@ import {
   LogoutOutlined,
   CarryOutOutlined,
   SafetyCertificateOutlined,
+  EnvironmentOutlined,
 } from "@ant-design/icons";
 import { Avatar, Dropdown, Layout, Menu, Space, Typography } from "antd";
 import { Outlet, useLocation, useNavigate } from "react-router-dom";
@@ -15,6 +16,7 @@ const { Header, Sider, Content } = Layout;
 
 const MENU_ITEMS = [
   { key: "/admin", icon: <DashboardOutlined />, label: "Dashboard" },
+  { key: "/admin/live", icon: <EnvironmentOutlined />, label: "Live ops" },
   { key: "/admin/drivers", icon: <CarOutlined />, label: "Drivers" },
   { key: "/admin/users", icon: <TeamOutlined />, label: "Users" },
   { key: "/admin/vehicles", icon: <CarryOutOutlined />, label: "Vehicles" },
@@ -32,7 +34,9 @@ export function AdminLayout() {
     navigate("/login", { replace: true });
   }
 
-  const selectedKey = MENU_ITEMS.find((item) => location.pathname === item.key)?.key ?? "/admin";
+  const selectedKey =
+    MENU_ITEMS.find((item) => location.pathname === item.key)?.key ??
+    (location.pathname.startsWith("/admin/trips") ? "/admin/live" : "/admin");
 
   return (
     <Layout style={{ minHeight: "100vh" }}>

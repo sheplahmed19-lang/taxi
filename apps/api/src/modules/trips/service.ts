@@ -6,7 +6,7 @@ import { prisma } from "../../db/index.js";
 import { getConfigValue } from "../../shared/config.js";
 import { logger } from "../../shared/logger.js";
 import { getRoute, haversineMeters } from "../../shared/maps.js";
-import { emitToTrip, emitToUser } from "../../realtime/index.js";
+import { emitToAdmins, emitToTrip, emitToUser } from "../../realtime/index.js";
 import { redis } from "../../shared/redis.js";
 import { ConflictError, ForbiddenError, NotFoundError } from "../../shared/errors.js";
 import { calculateFinalFare, estimateFares } from "../fares/service.js";
@@ -24,7 +24,7 @@ import { enqueueReferralBonusCheck } from "../../jobs/referralBonus.js";
 import { createTripShareToken, resolveTripShareToken } from "../../shared/shareTokens.js";
 import { nextStatus, type TripEvent, type TripStatus } from "./state-machine.js";
 
-const ACTIVE_TRIP_EXCLUDED_STATUSES: TripStatus[] = [
+export const ACTIVE_TRIP_EXCLUDED_STATUSES: TripStatus[] = [
   "paid",
   "cancelled_by_rider",
   "cancelled_by_driver",
@@ -112,6 +112,14 @@ export async function createTripRecord(riderId: string, input: CreateTripInput) 
   if (promoId) {
     await recordPromoRedemption(promoId, riderId, trip.id);
   }
+
+  emitToAdmins("admin:trip_new", {
+    tripId: trip.id,
+    riderId,
+    vehicleTypeId: input.vehicleTypeId,
+    pickup: input.pickup,
+    status: "requested",
+  });
 
   return trip;
 }
@@ -218,7 +226,7 @@ export async function transitionTrip(
 
   const timestampField = TIMESTAMP_FIELD_BY_STATUS[next];
 
-  return prisma.trip.update({
+  const updated = await prisma.trip.update({
     where: { id: tripId },
     data: {
       status: next,
@@ -226,6 +234,10 @@ export async function transitionTrip(
       ...extra,
     },
   });
+
+  emitToAdmins("admin:trip_status", { tripId, status: next, driverId: updated.driverId });
+
+  return updated;
 }
 
 export async function getTripForParticipant(tripId: string, userId: string) {
@@ -303,6 +315,19 @@ setInterval(() => {
     logger.error({ err }, "trip location flush failed");
   });
 }, LOCATION_FLUSH_INTERVAL_MS);
+
+/** Ordered trip_locations pings — the "route replay" a trip detail page draws as a polyline. Flushes the in-memory buffer first so the replay includes pings not yet persisted. */
+export async function getTripRoute(tripId: string) {
+  await flushTripLocations();
+  return prisma.$queryRaw<
+    Array<{ lat: number; lng: number; speed: number | null; heading: number | null; recordedAt: Date }>
+  >`
+    SELECT ST_Y(point) AS lat, ST_X(point) AS lng, speed, heading, recorded_at AS "recordedAt"
+    FROM trip_locations
+    WHERE trip_id = ${tripId}
+    ORDER BY recorded_at ASC
+  `;
+}
 
 export interface DriverLocationPing {
   lat: number;

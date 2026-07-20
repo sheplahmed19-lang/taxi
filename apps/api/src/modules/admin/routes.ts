@@ -31,6 +31,7 @@ import {
 } from "../vehicles/service.js";
 import {
   adjustOweSchema,
+  heatmapQuerySchema,
   listDriversQuerySchema,
   rejectDriverSchema,
   roleInputSchema,
@@ -43,8 +44,13 @@ import {
   createRole,
   deleteRole,
   getDashboardStats,
+  getDemandHeatmap,
   getDriverDocuments,
+  getSupplyHeatmap,
+  getTripDetailForAdmin,
+  listActiveTripsForMap,
   listDrivers,
+  listOnlineDrivers,
   listPermissions,
   listRoles,
   rejectDriver,
@@ -347,5 +353,46 @@ adminRouter.delete(
   asyncHandler(async (req, res) => {
     await deleteRole(req.params.id as string);
     res.json({ success: true, data: { deleted: true } });
+  }),
+);
+
+adminRouter.get(
+  "/live/drivers",
+  asyncHandler(async (_req, res) => {
+    const drivers = await listOnlineDrivers();
+    res.json({ success: true, data: { drivers } });
+  }),
+);
+
+adminRouter.get(
+  "/live/trips",
+  asyncHandler(async (_req, res) => {
+    const trips = await listActiveTripsForMap();
+    res.json({ success: true, data: { trips } });
+  }),
+);
+
+adminRouter.get(
+  "/trips/:id",
+  asyncHandler(async (req, res) => {
+    const trip = await getTripDetailForAdmin(req.params.id as string);
+    res.json({ success: true, data: trip });
+  }),
+);
+
+adminRouter.get(
+  "/heatmap/demand",
+  asyncHandler(async (req, res) => {
+    const { from, to } = heatmapQuerySchema.parse(req.query);
+    const points = await getDemandHeatmap(from, to);
+    res.json({ success: true, data: { points } });
+  }),
+);
+
+adminRouter.get(
+  "/heatmap/supply",
+  asyncHandler(async (_req, res) => {
+    const points = await getSupplyHeatmap();
+    res.json({ success: true, data: { points } });
   }),
 );

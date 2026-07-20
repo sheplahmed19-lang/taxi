@@ -1,5 +1,6 @@
 // admin module service — business logic lives here.
 // Other modules must only import from this file, never from routes.ts or internals.
+import { Prisma } from "@prisma/client";
 import { prisma } from "../../db/index.js";
 import { redis } from "../../shared/redis.js";
 import { ConflictError, NotFoundError } from "../../shared/errors.js";
@@ -7,6 +8,12 @@ import { logAudit } from "../../shared/auditLog.js";
 import { getSignedObjectUrl } from "../../shared/storage.js";
 import { geoSetKey, getDriverState } from "../drivers/service.js";
 import { enqueueBroadcast } from "../../jobs/broadcasts.js";
+import {
+  ACTIVE_TRIP_EXCLUDED_STATUSES,
+  getTripDropPoint,
+  getTripPickupPoint,
+  getTripRoute,
+} from "../trips/service.js";
 import type { DriverVerificationStatus } from "@prisma/client";
 
 /** Checks whether a user's assigned StaffRole grants the given permission key. */
@@ -241,4 +248,167 @@ export async function deleteRole(id: string): Promise<void> {
     throw new ConflictError("This role is still assigned to one or more users");
   }
   await prisma.staffRole.delete({ where: { id } });
+}
+
+// ── Live ops (Phase 4.3) ─────────────────────────────────────────────────
+// Realtime map data is served two ways: a REST snapshot on page load (below)
+// plus live deltas pushed over the /admin socket namespace (admin:trip_new,
+// admin:trip_status, admin:driver_location, admin:driver_status — emitted
+// from trips/service.ts's single transition choke point and from the
+// driver:location/driver:availability socket handlers in realtime/index.ts).
+
+export interface OnlineDriverMapEntry {
+  driverId: string;
+  name: string | null;
+  phone: string;
+  vehicleTypeId: string;
+  vehicleTypeName: string;
+  plate: string | null;
+  lat: number;
+  lng: number;
+  heading: number;
+  speed: number;
+  ts: number;
+}
+
+/** Every currently-online driver (any vehicle type) with identity + live position, for the admin map. */
+export async function listOnlineDrivers(): Promise<OnlineDriverMapEntry[]> {
+  const vehicleTypes = await prisma.vehicleType.findMany({ select: { id: true, name: true } });
+  const entries: OnlineDriverMapEntry[] = [];
+
+  for (const vt of vehicleTypes) {
+    const driverIds = await redis.zrange(geoSetKey(vt.id), 0, -1);
+    for (const driverId of driverIds) {
+      const state = await getDriverState(driverId);
+      if (!state) continue;
+
+      const profile = await prisma.driverProfile.findUnique({
+        where: { userId: driverId },
+        include: { user: { select: { name: true, phone: true } }, currentVehicle: { select: { plate: true } } },
+      });
+      if (!profile) continue;
+
+      entries.push({
+        driverId,
+        name: profile.user.name,
+        phone: profile.user.phone,
+        vehicleTypeId: vt.id,
+        vehicleTypeName: vt.name,
+        plate: profile.currentVehicle?.plate ?? null,
+        lat: state.lat,
+        lng: state.lng,
+        heading: state.heading,
+        speed: state.speed,
+        ts: state.ts,
+      });
+    }
+  }
+
+  return entries;
+}
+
+export interface ActiveTripMapEntry {
+  tripId: string;
+  status: string;
+  riderName: string | null;
+  driverId: string | null;
+  driverName: string | null;
+  vehicleTypeName: string;
+  pickup: { lat: number; lng: number } | null;
+  drop: { lat: number; lng: number } | null;
+  driverLocation: { lat: number; lng: number; heading: number } | null;
+}
+
+/** Every trip not yet in a terminal/paid state, with pickup/drop and the assigned driver's live position, for the admin map. */
+export async function listActiveTripsForMap(): Promise<ActiveTripMapEntry[]> {
+  const trips = await prisma.trip.findMany({
+    where: { status: { notIn: [...ACTIVE_TRIP_EXCLUDED_STATUSES, "completed", "scheduled"] } },
+    include: {
+      rider: { select: { name: true } },
+      driver: { select: { name: true } },
+      vehicleType: { select: { name: true } },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  return Promise.all(
+    trips.map(async (trip) => {
+      const [pickup, drop, driverLocation] = await Promise.all([
+        getTripPickupPoint(trip.id),
+        getTripDropPoint(trip.id),
+        trip.driverId ? getDriverState(trip.driverId) : null,
+      ]);
+
+      return {
+        tripId: trip.id,
+        status: trip.status,
+        riderName: trip.rider.name,
+        driverId: trip.driverId,
+        driverName: trip.driver?.name ?? null,
+        vehicleTypeName: trip.vehicleType.name,
+        pickup,
+        drop,
+        driverLocation: driverLocation
+          ? { lat: driverLocation.lat, lng: driverLocation.lng, heading: driverLocation.heading }
+          : null,
+      };
+    }),
+  );
+}
+
+/** Full trip detail for the admin trip-detail page, including the trip_locations route replay. */
+export async function getTripDetailForAdmin(tripId: string) {
+  const trip = await prisma.trip.findUnique({
+    where: { id: tripId },
+    include: {
+      rider: { select: { id: true, name: true, phone: true } },
+      driver: { select: { id: true, name: true, phone: true } },
+      vehicle: true,
+      vehicleType: true,
+    },
+  });
+  if (!trip) {
+    throw new NotFoundError("Trip not found");
+  }
+
+  const [pickup, drop, route] = await Promise.all([
+    getTripPickupPoint(tripId),
+    getTripDropPoint(tripId),
+    getTripRoute(tripId),
+  ]);
+
+  return { ...trip, pickup, drop, route };
+}
+
+export interface HeatmapPoint {
+  lat: number;
+  lng: number;
+}
+
+/**
+ * Demand heat map: trip request origin density, optionally windowed by
+ * Trip.createdAt. Every pickup point in range is returned as one point —
+ * the frontend's heat-map layer does the density aggregation client-side.
+ */
+export async function getDemandHeatmap(from?: Date, to?: Date): Promise<HeatmapPoint[]> {
+  const conditions = [Prisma.sql`pickup_point IS NOT NULL`];
+  if (from) conditions.push(Prisma.sql`created_at >= ${from}`);
+  if (to) conditions.push(Prisma.sql`created_at <= ${to}`);
+
+  return prisma.$queryRaw<HeatmapPoint[]>(Prisma.sql`
+    SELECT ST_Y(pickup_point) AS lat, ST_X(pickup_point) AS lng
+    FROM trips
+    WHERE ${Prisma.join(conditions, " AND ")}
+  `);
+}
+
+/**
+ * Supply heat map: driver density. Unlike demand, this has no time filter —
+ * only the live Redis GEO index exists (no historical driver-position
+ * store), so this is always a "right now" snapshot regardless of any
+ * from/to the caller passes for the demand layer.
+ */
+export async function getSupplyHeatmap(): Promise<HeatmapPoint[]> {
+  const drivers = await listOnlineDrivers();
+  return drivers.map((d) => ({ lat: d.lat, lng: d.lng }));
 }

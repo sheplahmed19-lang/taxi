@@ -38,3 +38,8 @@ export const updateRoleSchema = z.object({
   description: z.string().max(500).optional(),
   permissionIds: z.array(z.string().uuid()).optional(),
 });
+
+export const heatmapQuerySchema = z.object({
+  from: z.coerce.date().optional(),
+  to: z.coerce.date().optional(),
+});

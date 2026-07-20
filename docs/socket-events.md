@@ -32,7 +32,9 @@ Rooms: `user:{id}`, `trip:{id}`, `admin:live`
 | `trip:no_drivers` | `{tripId}` | rider | |
 | `chat:message` | `{tripId, message}` | trip room | `message` is the full ChatMessage row incl. `sender: {id,name,role}` |
 | `notification` | `{title, body, data}` | user room | |
-| `admin:driver_positions` | `{[...]}` | admin:live | |
-| `admin:trip_update` | `{...}` | admin:live | |
+| `admin:trip_new` | `{tripId, riderId, vehicleTypeId, pickup:{lat,lng}, status}` | admin:live | a rider requested a trip |
+| `admin:trip_status` | `{tripId, status, driverId}` | admin:live | emitted from `transitionTrip`, the single choke point for every trip status change |
+| `admin:driver_location` | `{driverId, lat, lng, heading, speed, ts, vehicleTypeId}` | admin:live | mirrors `driver:location`, only while the driver is online |
+| `admin:driver_status` | `{driverId, online}` | admin:live | driver went online/offline (explicit toggle or offline-grace timeout) |
 
 Update this file whenever an event or payload changes (see CLAUDE.md rule 9).

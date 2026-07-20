@@ -4,7 +4,7 @@ import { logger } from "../shared/logger.js";
 import { redis } from "../shared/redis.js";
 import { verifyAccessToken } from "../modules/auth/tokens.js";
 import type { AuthUser } from "../middleware/auth.js";
-import { recordLocation, setAvailability, type DriverLocationInput } from "../modules/drivers/service.js";
+import { getDriverState, recordLocation, setAvailability, type DriverLocationInput } from "../modules/drivers/service.js";
 import { scheduleOfflineGraceCheck } from "../jobs/driverOfflineGrace.js";
 import { resolveTripShareToken } from "../shared/shareTokens.js";
 
@@ -66,15 +66,27 @@ export function createRealtimeServer(httpServer: HttpServer): Server {
 
     if (user.role === "driver") {
       socket.on("driver:availability", (payload: { online: boolean }) => {
-        setAvailability(user.id, Boolean(payload?.online)).catch((err: unknown) => {
-          logger.warn({ err, driverId: user.id }, "driver:availability failed");
-        });
+        const online = Boolean(payload?.online);
+        setAvailability(user.id, online)
+          .then(() => {
+            emitToAdmins("admin:driver_status", { driverId: user.id, online });
+          })
+          .catch((err: unknown) => {
+            logger.warn({ err, driverId: user.id }, "driver:availability failed");
+          });
       });
 
       socket.on("driver:location", (payload: DriverLocationInput) => {
-        recordLocation(user.id, payload).catch((err: unknown) => {
-          logger.warn({ err, driverId: user.id }, "driver:location failed");
-        });
+        recordLocation(user.id, payload)
+          .then(() => getDriverState(user.id))
+          .then((state) => {
+            if (state) {
+              emitToAdmins("admin:driver_location", { driverId: user.id, ...state });
+            }
+          })
+          .catch((err: unknown) => {
+            logger.warn({ err, driverId: user.id }, "driver:location failed");
+          });
 
         // Dynamic import: trips/service.ts imports emitToTrip from this
         // file, so a static top-level import here would create a cycle.

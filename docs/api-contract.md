@@ -54,8 +54,15 @@ Base path: `/api/v1`. Responses: `{ success, data | error }`.
              cache immediately), permissions (GET), roles (GET, POST create with
              permissionIds), roles/:id (PATCH — replaces the permission set when
              permissionIds is passed; DELETE — blocked while still assigned to a user),
-             zones, trips, manual-booking, reports/*, heatmap (all not yet implemented —
-             live ops/reporting, later Phase 4 sub-phases),
+             live/drivers (GET — every currently-online driver, any vehicle type, with
+             identity + live position, for the realtime map), live/trips (GET — every
+             non-terminal trip with pickup/drop and the assigned driver's live position),
+             trips/:id (GET — full admin trip detail incl. the trip_locations route replay,
+             no participant restriction), heatmap/demand (GET; query: {from?, to?} — one
+             point per trip pickup in range, ISO date strings, omit either bound for
+             unbounded), heatmap/supply (GET — online driver positions; always a live
+             snapshot, no time filter, see below),
+             zones, manual-booking, reports/* (not yet implemented — Phase 4.4),
              subscriptions/plans (POST), subscriptions/plans/:id (PATCH),
              payouts (list, filter by status), payouts/:id/approve|reject|paid,
              owe (report of drivers with a positive balance), owe/:driverId/adjust
@@ -190,5 +197,48 @@ raw JSON so any config shape — number, string, boolean — round-trips), and a
 server (temp password set/cleared on the seeded admin for the login) and via Playwright in a
 real headless-Chromium browser (dashboard chart, driver documents modal, and the create/edit/
 suspend/delete flow on every new page) — all test artifacts cleaned up afterward.
+
+Live ops (Phase 4.3): the realtime map is served two ways — a REST snapshot on page load
+(`GET /admin/live/drivers`, `GET /admin/live/trips`) plus live deltas pushed over the
+already-registered-but-previously-inert `/admin` Socket.IO namespace (see
+docs/socket-events.md's `admin:*` rows). `admin:trip_status` is emitted from a single choke
+point, `trips/service.ts:transitionTrip` — the only place `Trip.status` ever changes
+(CLAUDE.md rule 2) — so every trip lifecycle event (accept, arrive, start, complete, cancel,
+payment settle) reaches the admin map for free without touching each call site separately;
+`admin:trip_new` is emitted alongside trip creation. `admin:driver_location`/
+`admin:driver_status` are emitted from the `driver:location`/`driver:availability` socket
+handlers (and from the offline-grace BullMQ job on a disconnect timeout) — mirroring, not
+replacing, the existing rider-facing `trip:driver_location` events. `listOnlineDrivers` only
+ever returns drivers still in the Redis GEO *dispatch* pool — a driver mid-trip is removed
+from that pool the moment they accept (pre-existing `dispatch/service.ts` behavior, unrelated
+to this phase), so an on-trip driver's position instead comes through `listActiveTripsForMap`'s
+`driverLocation` field, read from the same live state hash. Trip detail's route replay
+(`GET /admin/trips/:id`) reuses the exact `trip_locations` query `completeTrip` already ran to
+compute actual distance, exposed as `getTripRoute` — flushing the in-process location buffer
+first so a still-in-progress trip's most recent pings are included, not just what's already
+landed in Postgres. The demand heat map is every trip's pickup point, optionally windowed by
+`Trip.createdAt` (`Prisma.sql` composition, since the from/to bounds are each independently
+optional); the supply heat map is drivers currently in the GEO pool. Scope decision, disclosed
+rather than silently punted: unlike demand, supply has no time filter — there is no historical
+driver-position store, only the live GEO index, so `getSupplyHeatmap` is always a "right now"
+snapshot regardless of whatever `from`/`to` the caller is using for the demand layer. 8 new
+backend tests (`tests/admin-live-ops.test.ts`, `tests/admin-live-socket.test.ts` — the latter
+drives real Socket.IO connections end-to-end, same pattern as `tests/realtime-driver.test.ts`);
+full suite 260/260 passing 3x clean. Frontend: a new `/admin/live` page (Leaflet +
+`react-leaflet` + `react-leaflet-cluster` for driver clustering + `leaflet.heat` for both heat
+layers, OpenStreetMap tiles — no API key, unlike the Google Maps path `shared/maps.ts` already
+falls back off) with toggleable layers and a live `/admin` socket connection
+(`shared/useAdminSocket.ts`) patching an initial REST snapshot; `/admin/trips/:id` (linked from
+a live-map trip marker's popup) renders the full trip detail plus a polyline route replay with
+a play/pause + scrubber control. Live E2E-verified over real HTTP (temp password set/cleared on
+the seeded admin, a driver+trip seeded through the real dispatch/accept/arrive/start path,
+`GET /admin/live/trips` and `GET /admin/trips/:id` both returning the expected shape) and via
+Playwright in a real browser — 6/6 checks passed, including the replay's play button actually
+advancing the scrubber. Disclosed limitation: this sandbox has no outbound network access to
+any tile CDN (confirmed via a direct `curl` — `403`/`ERR_TUNNEL_CONNECTION_FAILED`), so the
+Leaflet base map itself renders as blank gray tiles here; everything that doesn't depend on
+external imagery — markers, popups, clustering, heat layers, the live socket updates, the
+route replay polyline and playback — was verified working. This is an environment constraint,
+not a code path left untested; it would render normally wherever outbound HTTPS is unrestricted.
 
 Keep this file in sync with the actual Express routers under `apps/api/src/modules/*`.

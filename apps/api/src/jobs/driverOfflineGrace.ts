@@ -34,6 +34,10 @@ const offlineGraceWorker = new Worker<GraceJobData>(
       return;
     }
     await markOffline(driverId);
+    // Dynamic import: realtime/index.ts imports scheduleOfflineGraceCheck
+    // from this file, so a static top-level import here would create a cycle.
+    const { emitToAdmins } = await import("../realtime/index.js");
+    emitToAdmins("admin:driver_status", { driverId, online: false });
     logger.debug({ driverId }, "driver marked offline after disconnect grace period");
   },
   { connection: workerConnection },
