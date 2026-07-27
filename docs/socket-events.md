@@ -14,7 +14,7 @@ Rooms: `user:{id}`, `trip:{id}`, `admin:live`
 
 | Event | Payload | Sender | Notes |
 |---|---|---|---|
-| `driver:location` | `{lat,lng,heading,speed,ts}` | driver | every 3–5s |
+| `driver:location` | `{lat,lng,heading,speed,ts,isMocked?}` | driver | every 3–5s. `isMocked` (Phase 5.2) mirrors Android's mock-location-provider flag (always false on iOS); server logs a warning when true. Implausible speed jumps (`max_plausible_speed_kmh` config) are rejected server-side rather than recorded — see `drivers/service.ts:recordLocation`. |
 | `driver:availability` | `{online: bool}` | driver | |
 | `trip:driver_response` | `{tripId, accept: bool}` | driver | |
 | `chat:send` | `{tripId, body}` | rider/driver | |

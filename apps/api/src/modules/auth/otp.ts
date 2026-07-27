@@ -8,6 +8,8 @@ import { TooManyRequestsError } from "../../shared/errors.js";
 const OTP_TTL_S = 5 * 60;
 const RATE_LIMIT_WINDOW_S = 60;
 const RATE_LIMIT_MAX_REQUESTS = 3;
+const MAX_VERIFY_ATTEMPTS = 5;
+const LOCKOUT_WINDOW_S = 15 * 60;
 
 function otpKey(phone: string): string {
   return `otp:${phone}`;
@@ -15,6 +17,10 @@ function otpKey(phone: string): string {
 
 function rateLimitKey(phone: string): string {
   return `otp:rate:${phone}`;
+}
+
+function verifyAttemptsKey(phone: string): string {
+  return `otp:verify_attempts:${phone}`;
 }
 
 /**
@@ -45,12 +51,31 @@ export async function requestOtp(phone: string): Promise<void> {
 /**
  * Verifies `otp` against the stored value for `phone`. Consumes the OTP on
  * success (single use) so it cannot be replayed.
+ *
+ * Brute-force lockout (Phase 5.2): every verify call — right or wrong —
+ * counts against a per-phone attempt counter with its own
+ * LOCKOUT_WINDOW_S TTL, independent of the OTP's own 5-min TTL and of
+ * requestOtp's request-rate limiter above (that one throttles *requesting*
+ * codes; this throttles *guessing* one). A short numeric OTP has few enough
+ * possibilities that unlimited verify attempts within its TTL would make it
+ * brute-forceable. The counter is cleared on a successful verify so it
+ * never penalizes a later, legitimate login.
  */
 export async function verifyOtp(phone: string, otp: string): Promise<boolean> {
+  const attemptsKeyName = verifyAttemptsKey(phone);
+  const attempts = await redis.incr(attemptsKeyName);
+  if (attempts === 1) {
+    await redis.expire(attemptsKeyName, LOCKOUT_WINDOW_S);
+  }
+  if (attempts > MAX_VERIFY_ATTEMPTS) {
+    throw new TooManyRequestsError("Too many incorrect attempts — request a new code");
+  }
+
   const stored = await redis.get(otpKey(phone));
   if (!stored || stored !== otp) {
     return false;
   }
   await redis.del(otpKey(phone));
+  await redis.del(attemptsKeyName);
   return true;
 }

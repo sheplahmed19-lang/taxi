@@ -4,6 +4,7 @@ import helmet from "helmet";
 import { pinoHttp } from "pino-http";
 import { logger } from "./shared/logger.js";
 import { errorHandler, notFoundHandler } from "./middleware/errorHandler.js";
+import { globalRateLimit, authRateLimit } from "./middleware/rateLimit.js";
 
 declare global {
   namespace Express {
@@ -51,7 +52,8 @@ export function createApp(): express.Express {
   });
 
   const v1 = express.Router();
-  v1.use("/auth", authRouter);
+  v1.use(globalRateLimit);
+  v1.use("/auth", authRateLimit, authRouter);
   v1.use("/users", usersRouter);
   v1.use("/drivers", driversRouter);
   v1.use("/vehicles", vehiclesRouter);

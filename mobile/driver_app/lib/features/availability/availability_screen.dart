@@ -54,6 +54,11 @@ class _AvailabilityScreenState extends ConsumerState<AvailabilityScreen> {
         'heading': position.heading,
         'speed': position.speed,
         'ts': DateTime.now().millisecondsSinceEpoch,
+        // Android surfaces mock-location-provider pings via this flag (always
+        // false on iOS, which has no equivalent concept); the server logs a
+        // warning when it's set so ops can flag the account for review — see
+        // apps/api/src/modules/drivers/service.ts:recordLocation.
+        'isMocked': position.isMocked,
       });
     });
   }

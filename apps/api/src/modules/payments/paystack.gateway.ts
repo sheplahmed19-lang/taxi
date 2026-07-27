@@ -1,4 +1,4 @@
-import { createHmac } from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 import { env } from "../../config/env.js";
 import { ValidationError } from "../../shared/errors.js";
 import type { PaymentGateway } from "./gateway.interface.js";
@@ -95,7 +95,13 @@ export class PaystackGateway implements PaymentGateway {
       return { valid: false };
     }
     const expected = createHmac("sha512", env.PAYSTACK_SECRET_KEY).update(payload).digest("hex");
-    if (expected !== signature) {
+    // Constant-time compare (Phase 5.2 security pass) — a plain `!==`
+    // string compare leaks timing information proportional to how many
+    // leading characters match, in principle letting an attacker recover a
+    // valid signature byte-by-byte.
+    const expectedBuf = Buffer.from(expected, "utf8");
+    const signatureBuf = Buffer.from(signature, "utf8");
+    if (expectedBuf.length !== signatureBuf.length || !timingSafeEqual(expectedBuf, signatureBuf)) {
       return { valid: false };
     }
     try {

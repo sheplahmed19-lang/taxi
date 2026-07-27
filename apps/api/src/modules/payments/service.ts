@@ -3,6 +3,7 @@
 import type Stripe from "stripe";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "../../db/index.js";
+import { redis } from "../../shared/redis.js";
 import { logger } from "../../shared/logger.js";
 import { ConflictError, NotFoundError, ForbiddenError, ValidationError } from "../../shared/errors.js";
 import { postEntry } from "../wallet/ledger.js";
@@ -13,6 +14,7 @@ import { PaystackGateway } from "./paystack.gateway.js";
 import type { PaymentGateway } from "./gateway.interface.js";
 
 export const DEFAULT_GATEWAY = "stripe";
+const WEBHOOK_DEDUPE_TTL_S = 24 * 60 * 60;
 
 const gateways: Record<string, PaymentGateway> = {
   stripe: new StripeGateway(),
@@ -184,6 +186,7 @@ export async function initSubscriptionPayment(
 }
 
 interface NormalizedWebhookEvent {
+  eventId: string;
   succeeded: boolean;
   failed: boolean;
   metadata: Record<string, string>;
@@ -196,6 +199,7 @@ function normalizeStripeEvent(event: unknown): NormalizedWebhookEvent | null {
   }
   const intent = stripeEvent.data.object as Stripe.PaymentIntent;
   return {
+    eventId: stripeEvent.id,
     succeeded: stripeEvent.type === "payment_intent.succeeded",
     failed: stripeEvent.type === "payment_intent.payment_failed",
     metadata: (intent.metadata ?? {}) as Record<string, string>,
@@ -204,7 +208,7 @@ function normalizeStripeEvent(event: unknown): NormalizedWebhookEvent | null {
 
 interface PaystackWebhookShape {
   event: string;
-  data?: { metadata?: Record<string, unknown> | null };
+  data?: { id?: number | string; reference?: string; metadata?: Record<string, unknown> | null };
 }
 
 function normalizePaystackEvent(event: unknown): NormalizedWebhookEvent | null {
@@ -217,7 +221,11 @@ function normalizePaystackEvent(event: unknown): NormalizedWebhookEvent | null {
     rawMetadata && typeof rawMetadata === "object"
       ? Object.fromEntries(Object.entries(rawMetadata).map(([key, value]) => [key, String(value)]))
       : {};
+  // Paystack webhooks carry no top-level event id — the transaction id (or,
+  // failing that, the reference) plus event type is the closest stand-in.
+  const dedupeId = paystackEvent.data?.id ?? paystackEvent.data?.reference ?? "unknown";
   return {
+    eventId: `${paystackEvent.event}:${dedupeId}`,
     succeeded: paystackEvent.event === "charge.success",
     failed: paystackEvent.event === "charge.failed",
     metadata,
@@ -237,6 +245,21 @@ export async function handleWebhook(gatewayName: string, rawBody: Buffer, signat
   const normalized = normalizeEvent(gatewayName, event);
   if (!normalized) {
     return; // an event type we don't act on
+  }
+
+  // Replay/duplicate-delivery protection (Phase 5.2): both gateways promise
+  // only "at least once" delivery, and Paystack's HMAC signature carries no
+  // timestamp at all (unlike Stripe's, which constructEvent already checks
+  // internally), so a captured valid (signature, body) pair has no built-in
+  // expiry. This is a time-boxed dedupe, not a permanent one — the deeper,
+  // permanent guard is the payment.status check below (a payment can only
+  // ever leave "pending" once), which this exists alongside rather than
+  // replaces.
+  const dedupeKey = `webhook:processed:${gatewayName}:${normalized.eventId}`;
+  const firstDelivery = await redis.set(dedupeKey, "1", "EX", WEBHOOK_DEDUPE_TTL_S, "NX");
+  if (!firstDelivery) {
+    logger.info({ gateway: gatewayName, eventId: normalized.eventId }, "duplicate webhook delivery ignored");
+    return;
   }
 
   const paymentId = normalized.metadata.paymentId;

@@ -23,7 +23,11 @@ class FakeGateway implements PaymentGateway {
   private counter = 0;
 
   async createIntent(input: { amount: number; currency: string; metadata?: Record<string, unknown> }) {
-    const id = `fake_pi_${++this.counter}`;
+    // Date.now() alongside the counter, not just the counter alone: a fresh
+    // `pnpm test` process resets the counter to 0 and replays the exact same
+    // id sequence, which collided with service.ts's webhook-replay dedupe
+    // Redis keys (Phase 5.2, 24h TTL) left over from the previous run.
+    const id = `fake_pi_${Date.now()}_${++this.counter}`;
     return { id, clientSecret: `${id}_secret` };
   }
 
@@ -47,6 +51,12 @@ class FakeGateway implements PaymentGateway {
 function fakeSucceededEvent(intentId: string, metadata: Record<string, string>) {
   return Buffer.from(
     JSON.stringify({
+      // A real Stripe event always carries a unique top-level id
+      // (evt_...) — service.ts's webhook-replay dedupe (Phase 5.2) keys on
+      // it, so fixtures need one too, distinct from the nested payment
+      // intent id, or every fake event in the suite would collide as the
+      // same "duplicate" delivery.
+      id: `evt_${intentId}`,
       type: "payment_intent.succeeded",
       data: { object: { id: intentId, metadata } },
     }),
@@ -56,6 +66,7 @@ function fakeSucceededEvent(intentId: string, metadata: Record<string, string>) 
 function fakeFailedEvent(intentId: string, metadata: Record<string, string>) {
   return Buffer.from(
     JSON.stringify({
+      id: `evt_${intentId}_failed`,
       type: "payment_intent.payment_failed",
       data: { object: { id: intentId, metadata } },
     }),
@@ -110,11 +121,15 @@ async function makeCompletedTrip(riderId: string, driverId: string, paymentMetho
 }
 
 function fakePaystackSucceededEvent(metadata: Record<string, string>) {
-  return Buffer.from(JSON.stringify({ event: "charge.success", data: { reference: "ps_ref", metadata } }));
+  // Real Paystack webhooks carry no top-level event id; service.ts's replay
+  // dedupe falls back to data.id/data.reference + event type, so — same
+  // reasoning as the Stripe fixtures above — the reference must be unique
+  // per payment, not a shared literal every fixture in the suite reused.
+  return Buffer.from(JSON.stringify({ event: "charge.success", data: { reference: `ps_${metadata.paymentId}`, metadata } }));
 }
 
 function fakePaystackFailedEvent(metadata: Record<string, string>) {
-  return Buffer.from(JSON.stringify({ event: "charge.failed", data: { reference: "ps_ref", metadata } }));
+  return Buffer.from(JSON.stringify({ event: "charge.failed", data: { reference: `ps_${metadata.paymentId}_failed`, metadata } }));
 }
 
 describe("payments", () => {

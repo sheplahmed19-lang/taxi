@@ -5,6 +5,8 @@ import { redis } from "../../shared/redis.js";
 import { uploadObject, getSignedObjectUrl } from "../../shared/storage.js";
 import { getConfigValue } from "../../shared/config.js";
 import { ForbiddenError, NotFoundError } from "../../shared/errors.js";
+import { haversineMeters } from "../../shared/maps.js";
+import { logger } from "../../shared/logger.js";
 
 export interface RegisterDriverInput {
   name?: string;
@@ -176,20 +178,63 @@ export interface DriverLocationInput {
   heading?: number;
   speed?: number;
   ts?: number;
+  /** Android's mock-location-provider flag (see geolocator's Position.isMocked); always false/absent on iOS. */
+  isMocked?: boolean;
 }
+
+const DEFAULT_MAX_PLAUSIBLE_SPEED_KMH = 180;
+// Below this gap, GPS jitter alone can imply absurd speeds over a tiny
+// distance/time — skip the check rather than false-positive on noise.
+const MIN_INTERVAL_S_FOR_SPEED_CHECK = 2;
 
 /**
  * Records a live location ping: GEOADD into the per-vehicle-type set and a
  * state hash for fast lookups. Pings from a driver who isn't marked online
  * (or has no registered vehicle) are silently ignored.
+ *
+ * GPS-spoof mitigations (Phase 5.2): a ping flagged `isMocked` by the device
+ * is logged (not blocked outright — that's an ops/policy call, e.g. for
+ * legitimate testing) so it's visible for review; a ping implying a speed
+ * beyond `max_plausible_speed_kmh` (system_config, CLAUDE.md rule 10) since
+ * the previous recorded ping is rejected outright rather than silently
+ * teleporting the driver's live position. Returns whether the ping was
+ * accepted so callers (e.g. tests) can assert on rejection.
  */
-export async function recordLocation(userId: string, location: DriverLocationInput): Promise<void> {
+export async function recordLocation(
+  userId: string,
+  location: DriverLocationInput,
+): Promise<{ accepted: boolean }> {
   const profile = await prisma.driverProfile.findUnique({
     where: { userId },
     include: { currentVehicle: true },
   });
   if (!profile?.online || !profile.currentVehicle) {
-    return;
+    return { accepted: false };
+  }
+
+  if (location.isMocked) {
+    logger.warn({ userId }, "driver location ping flagged as mocked/simulated by device");
+  }
+
+  const now = location.ts ?? Date.now();
+  const previous = await redis.hgetall(stateKey(userId));
+  if (previous.lat && previous.lng && previous.ts) {
+    const elapsedS = (now - Number(previous.ts)) / 1000;
+    if (elapsedS >= MIN_INTERVAL_S_FOR_SPEED_CHECK) {
+      const distanceM = haversineMeters(
+        { lat: Number(previous.lat), lng: Number(previous.lng) },
+        { lat: location.lat, lng: location.lng },
+      );
+      const impliedSpeedKmh = (distanceM / elapsedS) * 3.6;
+      const maxSpeedKmh = await getConfigValue("max_plausible_speed_kmh", DEFAULT_MAX_PLAUSIBLE_SPEED_KMH);
+      if (impliedSpeedKmh > maxSpeedKmh) {
+        logger.warn(
+          { userId, impliedSpeedKmh: Math.round(impliedSpeedKmh), maxSpeedKmh },
+          "rejected implausible driver location jump (possible GPS spoofing)",
+        );
+        return { accepted: false };
+      }
+    }
   }
 
   const vehicleTypeId = profile.currentVehicle.vehicleTypeId;
@@ -199,9 +244,10 @@ export async function recordLocation(userId: string, location: DriverLocationInp
     lng: String(location.lng),
     heading: String(location.heading ?? 0),
     speed: String(location.speed ?? 0),
-    ts: String(location.ts ?? Date.now()),
+    ts: String(now),
     vehicleTypeId,
   });
+  return { accepted: true };
 }
 
 /** Removes a driver from the live GEO index and marks them offline in the DB. */

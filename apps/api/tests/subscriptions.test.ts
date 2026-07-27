@@ -23,7 +23,10 @@ const drop = { lat: 30.06, lng: 31.24 };
 class FakeGateway implements PaymentGateway {
   private counter = 0;
   async createIntent() {
-    const id = `fake_sub_pi_${++this.counter}`;
+    // Date.now() alongside the counter — see payments.test.ts's identical
+    // fix for why a counter alone collides with service.ts's webhook-replay
+    // dedupe (Phase 5.2) across separate `pnpm test` invocations.
+    const id = `fake_sub_pi_${Date.now()}_${++this.counter}`;
     return { id, clientSecret: `${id}_secret` };
   }
   async capture() {
@@ -42,7 +45,11 @@ class FakeGateway implements PaymentGateway {
 }
 
 function fakeSucceededEvent(metadata: Record<string, string>) {
-  return Buffer.from(JSON.stringify({ type: "payment_intent.succeeded", data: { object: { id: "x", metadata } } }));
+  // id must be unique per payment — service.ts's webhook-replay dedupe
+  // (Phase 5.2) keys on it; see payments.test.ts's fixtures for the same fix.
+  return Buffer.from(
+    JSON.stringify({ id: `evt_${metadata.paymentId}`, type: "payment_intent.succeeded", data: { object: { id: "x", metadata } } }),
+  );
 }
 
 async function waitFor(conditionFn: () => Promise<boolean>, timeoutMs = 3000): Promise<void> {
