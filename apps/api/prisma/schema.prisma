@@ -330,6 +330,8 @@ model Trip {
   @@index([riderId])
   @@index([driverId])
   @@index([status])
+  @@index([createdAt])
+  @@index([paidAt])
 }
 
 // point is set/read via raw SQL — see Zone.polygon comment above.
@@ -378,6 +380,7 @@ model LedgerEntry {
   @@map("ledger_entries")
   @@index([walletId])
   @@index([tripId])
+  @@index([createdAt])
 }
 
 model Payment {

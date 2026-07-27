@@ -5,6 +5,7 @@ build/
 .env.*
 !.env.example
 *.log
+apps/api/loadtest/.fixtures.json
 
 # Flutter
 mobile/**/.dart_tool/
