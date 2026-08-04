@@ -1,9 +1,11 @@
 import { useState } from "react";
+import { CarOutlined } from "@ant-design/icons";
 import { Alert, Button, Card, Form, Input, Segmented, Tabs, Typography } from "antd";
 import { isAxiosError } from "axios";
 import { useNavigate } from "react-router-dom";
 import { useAuth } from "./AuthProvider";
 import { panelPathForRole } from "./auth";
+import { brand } from "./theme";
 
 interface StaffLoginValues {
   email: string;
@@ -146,17 +148,57 @@ function RiderDriverLoginForm() {
 
 export function LoginPage() {
   return (
-    <div style={{ display: "flex", justifyContent: "center", alignItems: "center", height: "100vh" }}>
-      <Card style={{ width: 380 }}>
-        <Typography.Title level={4}>Ride Platform</Typography.Title>
-        <Tabs
-          defaultActiveKey="rider-driver"
-          items={[
-            { key: "rider-driver", label: "Rider / Driver", children: <RiderDriverLoginForm /> },
-            { key: "staff", label: "Staff", children: <StaffLoginForm /> },
-          ]}
-        />
-      </Card>
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        minHeight: "100vh",
+        padding: 24,
+        background: `radial-gradient(1200px circle at 15% 10%, rgba(79,70,229,0.16), transparent 55%),
+                     radial-gradient(900px circle at 100% 100%, rgba(245,158,11,0.14), transparent 50%),
+                     ${brand.pageBg}`,
+      }}
+    >
+      <div style={{ width: "100%", maxWidth: 400 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 12, justifyContent: "center", marginBottom: 24 }}>
+          <div
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              background: `linear-gradient(135deg, ${brand.primary}, ${brand.accent})`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              boxShadow: "0 6px 16px rgba(79, 70, 229, 0.28)",
+            }}
+          >
+            <CarOutlined style={{ color: "#fff", fontSize: 22 }} />
+          </div>
+          <Typography.Title level={3} style={{ margin: 0 }}>
+            Ride Platform
+          </Typography.Title>
+        </div>
+        <Card
+          style={{ boxShadow: "0 8px 30px rgba(16, 24, 40, 0.08)", border: "1px solid #EEF0F5" }}
+          styles={{ body: { padding: 28 } }}
+        >
+          <Typography.Title level={4} style={{ marginTop: 0, marginBottom: 4 }}>
+            Welcome back
+          </Typography.Title>
+          <Typography.Paragraph type="secondary" style={{ marginBottom: 20 }}>
+            Sign in to manage your rides.
+          </Typography.Paragraph>
+          <Tabs
+            defaultActiveKey="rider-driver"
+            items={[
+              { key: "rider-driver", label: "Rider / Driver", children: <RiderDriverLoginForm /> },
+              { key: "staff", label: "Staff", children: <StaffLoginForm /> },
+            ]}
+          />
+        </Card>
+      </div>
     </div>
   );
 }
